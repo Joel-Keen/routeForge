@@ -50,6 +50,8 @@ ROUTE_RIDGE_HEIGHT   = 6.0     # mm above terrain surface
 ROUTE_RIDGE_WIDTH_MM = 3.0     # mm, full width of ridge
 MARGIN_FRAC          = 0.2     # margin around route bbox
 GPX_FILE             = "stcuthbertsway.gpx"  # default GPX input
+OPEN_ELEVATION_BATCH_SIZE = 400  # points per HTTP request
+OPEN_ELEVATION_MAX_REQUESTS = 25  # hard cap on HTTP requests
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -137,8 +139,42 @@ def next_versioned_stl_path(artifact_dir, stem):
     return os.path.join(artifact_dir, out_name), next_version
 
 
+def estimate_request_count(nx, ny, batch_size):
+    return (nx * ny + batch_size - 1) // batch_size
+
+
+def auto_adjust_grid_to_budget(nx, ny, batch_size, max_requests):
+    """Reduce grid size to stay within API request budget while preserving aspect."""
+    requested_nx, requested_ny = nx, ny
+    requested_calls = estimate_request_count(nx, ny, batch_size)
+    if requested_calls <= max_requests:
+        return nx, ny, requested_calls, False, requested_nx, requested_ny, requested_calls
+
+    max_points = max_requests * batch_size
+    current_points = nx * ny
+    scale = math.sqrt(max_points / current_points)
+    nx = max(4, int(math.floor(nx * scale)))
+    ny = max(4, int(math.floor(ny * scale)))
+
+    # Discrete correction to guarantee the request cap after rounding.
+    aspect = requested_nx / requested_ny if requested_ny > 0 else 1.0
+    while estimate_request_count(nx, ny, batch_size) > max_requests:
+        if nx >= ny and nx > 4:
+            nx -= 1
+            ny = max(4, int(round(nx / aspect)))
+        elif ny > 4:
+            ny -= 1
+            nx = max(4, int(round(ny * aspect)))
+        else:
+            break
+
+    effective_calls = estimate_request_count(nx, ny, batch_size)
+    return nx, ny, effective_calls, True, requested_nx, requested_ny, requested_calls
+
+
 def build_cache_metadata(gpx_abs, lat_min, lat_max, lon_min, lon_max, nx, ny,
-                         print_width_mm, print_height_mm, margin_frac):
+                         print_width_mm, print_height_mm, margin_frac,
+                         batch_size, max_requests):
     gpx_stat = os.stat(gpx_abs)
     return {
         "gpx_path": gpx_abs,
@@ -147,6 +183,9 @@ def build_cache_metadata(gpx_abs, lat_min, lat_max, lon_min, lon_max, nx, ny,
         "print_width_mm": float(print_width_mm),
         "print_height_mm": float(print_height_mm),
         "margin_frac": float(margin_frac),
+        "batch_size": int(batch_size),
+        "max_requests": int(max_requests),
+        "estimated_requests": int(estimate_request_count(nx, ny, batch_size)),
         "nx": int(nx),
         "ny": int(ny),
         "lat_min": round(float(lat_min), 8),
@@ -278,7 +317,7 @@ def fetch_srtm_elevation(lat_min, lat_max, lon_min, lon_max, nx, ny):
     flat_lons = grid_lons.ravel()
     elevations = np.zeros(len(flat_lats), dtype=float)
 
-    batch = 400   # Open Elevation accepts up to 512 per POST
+    batch = OPEN_ELEVATION_BATCH_SIZE
     url = "https://api.open-elevation.com/api/v1/lookup"
     print(f"Fetching {len(flat_lats)} elevation points in batches of {batch}...")
 
@@ -523,12 +562,23 @@ def main():
         ny = grid_resolution
         nx = max(4, int(round(grid_resolution * aspect)))
 
-    print(f"  Grid: {nx} × {ny} (cols × rows)")
+    nx, ny, estimated_calls, auto_reduced, req_nx, req_ny, req_calls = auto_adjust_grid_to_budget(
+        nx, ny, OPEN_ELEVATION_BATCH_SIZE, OPEN_ELEVATION_MAX_REQUESTS
+    )
+
+    print(f"  Grid requested: {req_nx} × {req_ny} ({req_calls} requests estimated)")
+    if auto_reduced:
+        print(f"  Grid adjusted for budget: {nx} × {ny} ({estimated_calls} requests estimated)")
+    else:
+        print(f"  Grid within budget: {nx} × {ny} ({estimated_calls} requests estimated)")
+    print(f"  OpenElevation budget: max {OPEN_ELEVATION_MAX_REQUESTS} requests, "
+          f"{OPEN_ELEVATION_BATCH_SIZE} points/request")
 
     print("Loading cached elevation data or fetching from Open Elevation API...")
     expected_meta = build_cache_metadata(
         artifacts["gpx_abs"], lat_min, lat_max, lon_min, lon_max, nx, ny,
-        print_width_mm, print_height_mm, margin_frac
+        print_width_mm, print_height_mm, margin_frac,
+        OPEN_ELEVATION_BATCH_SIZE, OPEN_ELEVATION_MAX_REQUESTS
     )
     elev = load_or_fetch_elevation(
         artifacts["cache_npy"], artifacts["cache_meta"], expected_meta

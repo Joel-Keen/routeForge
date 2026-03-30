@@ -49,3 +49,13 @@ Elevation data is reused from cache and only re-downloaded when any cache key va
 - `PRINT_HEIGHT_MM`
 - `MARGIN_FRAC`
 - computed grid/bbox parameters
+
+## OpenElevation request cap
+
+The script enforces a fixed OpenElevation budget of:
+
+- 25 HTTP requests maximum
+- 400 points per request
+
+If your requested grid would exceed this cap, the script automatically reduces
+grid density while preserving the aspect ratio, then continues.
