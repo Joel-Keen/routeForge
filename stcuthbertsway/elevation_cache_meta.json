@@ -2,13 +2,13 @@
   "gpx_mtime_ns": 1774883700863722900,
   "gpx_path": "C:\\Users\\jk7g24\\GitHub\\routeForge\\stcuthbertsway.gpx",
   "gpx_size": 11590,
-  "lat_max": 55.72343528,
-  "lat_min": 55.44510359,
+  "lat_max": 55.94860923,
+  "lat_min": 55.21992964,
   "lon_max": -1.61500496,
   "lon_min": -2.90426176,
   "margin_frac": 0.2,
   "nx": 200,
-  "ny": 76,
+  "ny": 200,
   "print_height_mm": 100.0,
   "print_width_mm": 100.0
 }

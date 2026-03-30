@@ -181,6 +181,41 @@ def compute_bbox(points, margin_frac):
     )
 
 
+def fit_bbox_to_print_aspect(lat_min, lat_max, lon_min, lon_max, print_w_mm, print_h_mm):
+    """
+    Expand only the non-limiting geographic axis so the bbox aspect matches
+    print aspect (width/height) without distorting route/elevation scale.
+    """
+    lat_span = lat_max - lat_min
+    lon_span = lon_max - lon_min
+    if lat_span <= 0 or lon_span <= 0:
+        raise ValueError("Invalid bbox spans; GPX route must cover non-zero area")
+
+    mid_lat = (lat_min + lat_max) / 2.0
+    cos_lat = max(0.01, abs(math.cos(math.radians(mid_lat))))
+    current_aspect = (lon_span * cos_lat) / lat_span
+    target_aspect = print_w_mm / print_h_mm
+
+    if current_aspect > target_aspect:
+        # Too wide for print aspect: keep longitude scale, add latitude padding.
+        new_lat_span = (lon_span * cos_lat) / target_aspect
+        d_lat = (new_lat_span - lat_span) / 2.0
+        lat_min -= d_lat
+        lat_max += d_lat
+        fit_mode = "expanded latitude"
+    elif current_aspect < target_aspect:
+        # Too tall/narrow for print aspect: keep latitude scale, add longitude padding.
+        new_lon_span = (lat_span * target_aspect) / cos_lat
+        d_lon = (new_lon_span - lon_span) / 2.0
+        lon_min -= d_lon
+        lon_max += d_lon
+        fit_mode = "expanded longitude"
+    else:
+        fit_mode = "aspect already matched"
+
+    return lat_min, lat_max, lon_min, lon_max, fit_mode
+
+
 def fetch_srtm_elevation(lat_min, lat_max, lon_min, lon_max, nx, ny):
     """
     Fetch SRTM 90m elevation data via the Open Elevation API (free, no key).
@@ -409,22 +444,28 @@ def main():
     print(f"  {len(route_pts)} track points")
 
     lat_min, lat_max, lon_min, lon_max = compute_bbox(route_pts, MARGIN_FRAC)
-    print(f"  Bounding box: lat {lat_min:.4f}–{lat_max:.4f}, "
+    print(f"  Route+margin bbox: lat {lat_min:.4f}–{lat_max:.4f}, "
           f"lon {lon_min:.4f}–{lon_max:.4f}")
 
-    # Compute grid dimensions preserving geographic aspect ratio
+    lat_min, lat_max, lon_min, lon_max, fit_mode = fit_bbox_to_print_aspect(
+        lat_min, lat_max, lon_min, lon_max, PRINT_WIDTH_MM, PRINT_HEIGHT_MM
+    )
+    print(f"  Aspect-fitted bbox ({fit_mode}): lat {lat_min:.4f}–{lat_max:.4f}, "
+          f"lon {lon_min:.4f}–{lon_max:.4f}")
+
+    # Compute grid dimensions from fitted bbox.
     # 1 deg lat ≈ 111 km; 1 deg lon ≈ 111 km * cos(lat)
     mid_lat = (lat_min + lat_max) / 2.0
     lat_km = (lat_max - lat_min) * 111.0
-    lon_km = (lon_max - lon_min) * 111.0 * math.cos(math.radians(mid_lat))
-    aspect = lon_km / lat_km   # typically >1 for this route
+    lon_km = (lon_max - lon_min) * 111.0 * max(0.01, abs(math.cos(math.radians(mid_lat))))
+    aspect = lon_km / lat_km
 
     if aspect >= 1:
         nx = GRID_RESOLUTION
-        ny = max(4, int(GRID_RESOLUTION / aspect))
+        ny = max(4, int(round(GRID_RESOLUTION / aspect)))
     else:
         ny = GRID_RESOLUTION
-        nx = max(4, int(GRID_RESOLUTION * aspect))
+        nx = max(4, int(round(GRID_RESOLUTION * aspect)))
 
     print(f"  Grid: {nx} × {ny} (cols × rows)")
 
