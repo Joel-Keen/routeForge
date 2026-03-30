@@ -8,7 +8,7 @@ Dependencies:
     pip install gpxpy numpy scipy numpy-stl requests
 
 Usage:
-    python gpx_to_stl.py [optional_input.gpx]
+    python gpx_to_stl.py --gpx stcuthbertsway.gpx [--width 120 --height 60]
 
 Output:
     <gpx_stem>/<gpx_stem>_terrain_vN.stl
@@ -18,7 +18,7 @@ Cache:
     <gpx_stem>/elevation_cache_meta.json
 
 Settings (edit below):
-    GPX_FILE            : Default GPX file path (used when no CLI arg)
+    GPX_FILE            : Default GPX file path (used when --gpx is omitted)
     PRINT_WIDTH_MM      : X dimension of print bed footprint
     PRINT_HEIGHT_MM     : Y dimension of print bed footprint
     BASE_THICKNESS_MM   : Solid base below lowest terrain point
@@ -33,6 +33,7 @@ import sys
 import os
 import math
 import json
+import argparse
 import numpy as np
 from scipy.ndimage import gaussian_filter
 from stl import mesh as stl_mesh
@@ -43,13 +44,12 @@ import gpxpy.gpx
 PRINT_WIDTH_MM       = 100.0   # mm, X axis
 PRINT_HEIGHT_MM      = 100.0    # mm, Y axis
 BASE_THICKNESS_MM    = 3.0     # mm, solid base
-VERTICAL_EXAG        = 10.0    # vertical exaggeration
+VERTICAL_EXAG        = 6.0    # vertical exaggeration
 GRID_RESOLUTION      = 200     # cells along longer axis
-ROUTE_RIDGE_HEIGHT   = 4.0     # mm above terrain surface
-ROUTE_RIDGE_WIDTH_MM = 2.0     # mm, full width of ridge
+ROUTE_RIDGE_HEIGHT   = 6.0     # mm above terrain surface
+ROUTE_RIDGE_WIDTH_MM = 3.0     # mm, full width of ridge
 MARGIN_FRAC          = 0.2     # margin around route bbox
 GPX_FILE             = "stcuthbertsway.gpx"  # default GPX input
-ALLOW_CLI_GPX_OVERRIDE = True  # argv[1] overrides GPX_FILE when available
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -59,10 +59,54 @@ def sanitise_name(name):
     return clean or "route"
 
 
-def resolve_gpx_path(argv):
-    if ALLOW_CLI_GPX_OVERRIDE and len(argv) > 1:
-        return argv[1]
-    return GPX_FILE
+def positive_float(value):
+    num = float(value)
+    if num <= 0:
+        raise argparse.ArgumentTypeError("value must be > 0")
+    return num
+
+
+def non_negative_float(value):
+    num = float(value)
+    if num < 0:
+        raise argparse.ArgumentTypeError("value must be >= 0")
+    return num
+
+
+def min_int(min_value):
+    def _validator(value):
+        num = int(value)
+        if num < min_value:
+            raise argparse.ArgumentTypeError(f"value must be >= {min_value}")
+        return num
+    return _validator
+
+
+def parse_args(argv):
+    parser = argparse.ArgumentParser(
+        description="Generate a 3D-printable STL terrain model from GPX route data."
+    )
+    parser.add_argument("--gpx", default=GPX_FILE, help="Path to GPX input file")
+
+    parser.add_argument("--width", type=positive_float, default=PRINT_WIDTH_MM,
+                        help=f"Print width in mm (default: {PRINT_WIDTH_MM})")
+    parser.add_argument("--height", type=positive_float, default=PRINT_HEIGHT_MM,
+                        help=f"Print height in mm (default: {PRINT_HEIGHT_MM})")
+    parser.add_argument("--base-thickness", type=positive_float, default=BASE_THICKNESS_MM,
+                        help=f"Base thickness in mm (default: {BASE_THICKNESS_MM})")
+    parser.add_argument("--ridge-height", type=non_negative_float, default=ROUTE_RIDGE_HEIGHT,
+                        help=f"Embossed route ridge height in mm (default: {ROUTE_RIDGE_HEIGHT})")
+    parser.add_argument("--ridge-width", type=positive_float, default=ROUTE_RIDGE_WIDTH_MM,
+                        help=f"Embossed route ridge width in mm (default: {ROUTE_RIDGE_WIDTH_MM})")
+
+    parser.add_argument("--vertical-exag", type=positive_float, default=VERTICAL_EXAG,
+                        help=f"Vertical exaggeration factor (default: {VERTICAL_EXAG})")
+    parser.add_argument("--grid-res", type=min_int(4), default=GRID_RESOLUTION,
+                        help=f"Grid cells on longer axis (default: {GRID_RESOLUTION})")
+    parser.add_argument("--margin-frac", type=non_negative_float, default=MARGIN_FRAC,
+                        help=f"Fractional route margin around bbox (default: {MARGIN_FRAC})")
+
+    return parser.parse_args(argv[1:])
 
 
 def get_artifact_paths(gpx_path):
@@ -93,15 +137,16 @@ def next_versioned_stl_path(artifact_dir, stem):
     return os.path.join(artifact_dir, out_name), next_version
 
 
-def build_cache_metadata(gpx_abs, lat_min, lat_max, lon_min, lon_max, nx, ny):
+def build_cache_metadata(gpx_abs, lat_min, lat_max, lon_min, lon_max, nx, ny,
+                         print_width_mm, print_height_mm, margin_frac):
     gpx_stat = os.stat(gpx_abs)
     return {
         "gpx_path": gpx_abs,
         "gpx_size": int(gpx_stat.st_size),
         "gpx_mtime_ns": int(gpx_stat.st_mtime_ns),
-        "print_width_mm": float(PRINT_WIDTH_MM),
-        "print_height_mm": float(PRINT_HEIGHT_MM),
-        "margin_frac": float(MARGIN_FRAC),
+        "print_width_mm": float(print_width_mm),
+        "print_height_mm": float(print_height_mm),
+        "margin_frac": float(margin_frac),
         "nx": int(nx),
         "ny": int(ny),
         "lat_min": round(float(lat_min), 8),
@@ -427,7 +472,18 @@ def build_stl_from_heightmap(z_mm, print_w_mm, print_h_mm):
 
 
 def main():
-    gpx_path = resolve_gpx_path(sys.argv)
+    args = parse_args(sys.argv)
+
+    gpx_path = args.gpx
+    print_width_mm = args.width
+    print_height_mm = args.height
+    base_thickness_mm = args.base_thickness
+    vertical_exag = args.vertical_exag
+    grid_resolution = args.grid_res
+    route_ridge_height = args.ridge_height
+    route_ridge_width_mm = args.ridge_width
+    margin_frac = args.margin_frac
+
     artifacts = get_artifact_paths(gpx_path)
     out_path, version = next_versioned_stl_path(artifacts["artifact_dir"], artifacts["stem"])
 
@@ -443,12 +499,12 @@ def main():
         raise ValueError("No track or route points found in GPX file")
     print(f"  {len(route_pts)} track points")
 
-    lat_min, lat_max, lon_min, lon_max = compute_bbox(route_pts, MARGIN_FRAC)
+    lat_min, lat_max, lon_min, lon_max = compute_bbox(route_pts, margin_frac)
     print(f"  Route+margin bbox: lat {lat_min:.4f}–{lat_max:.4f}, "
           f"lon {lon_min:.4f}–{lon_max:.4f}")
 
     lat_min, lat_max, lon_min, lon_max, fit_mode = fit_bbox_to_print_aspect(
-        lat_min, lat_max, lon_min, lon_max, PRINT_WIDTH_MM, PRINT_HEIGHT_MM
+        lat_min, lat_max, lon_min, lon_max, print_width_mm, print_height_mm
     )
     print(f"  Aspect-fitted bbox ({fit_mode}): lat {lat_min:.4f}–{lat_max:.4f}, "
           f"lon {lon_min:.4f}–{lon_max:.4f}")
@@ -461,17 +517,18 @@ def main():
     aspect = lon_km / lat_km
 
     if aspect >= 1:
-        nx = GRID_RESOLUTION
-        ny = max(4, int(round(GRID_RESOLUTION / aspect)))
+        nx = grid_resolution
+        ny = max(4, int(round(grid_resolution / aspect)))
     else:
-        ny = GRID_RESOLUTION
-        nx = max(4, int(round(GRID_RESOLUTION * aspect)))
+        ny = grid_resolution
+        nx = max(4, int(round(grid_resolution * aspect)))
 
     print(f"  Grid: {nx} × {ny} (cols × rows)")
 
     print("Loading cached elevation data or fetching from Open Elevation API...")
     expected_meta = build_cache_metadata(
-        artifacts["gpx_abs"], lat_min, lat_max, lon_min, lon_max, nx, ny
+        artifacts["gpx_abs"], lat_min, lat_max, lon_min, lon_max, nx, ny,
+        print_width_mm, print_height_mm, margin_frac
     )
     elev = load_or_fetch_elevation(
         artifacts["cache_npy"], artifacts["cache_meta"], expected_meta
@@ -486,26 +543,26 @@ def main():
         route_pts, lat_min, lat_max, lon_min, lon_max, nx, ny
     )
     # Convert ridge width from mm to pixels
-    px_per_mm_x = (nx - 1) / PRINT_WIDTH_MM
-    ridge_px = ROUTE_RIDGE_WIDTH_MM * px_per_mm_x
+    px_per_mm_x = (nx - 1) / print_width_mm
+    ridge_px = route_ridge_width_mm * px_per_mm_x
     route_mask = rasterise_route(route_grid, ny, nx, ridge_px)
 
     print("Building height grid...")
     z_mm = build_height_grid(
-        elev, route_mask, VERTICAL_EXAG,
-        PRINT_WIDTH_MM, PRINT_HEIGHT_MM,
-        BASE_THICKNESS_MM, ROUTE_RIDGE_HEIGHT
+        elev, route_mask, vertical_exag,
+        print_width_mm, print_height_mm,
+        base_thickness_mm, route_ridge_height
     )
     print(f"  Z range: {z_mm.min():.2f}–{z_mm.max():.2f} mm")
 
     print("Building STL mesh...")
-    solid = build_stl_from_heightmap(z_mm, PRINT_WIDTH_MM, PRINT_HEIGHT_MM)
+    solid = build_stl_from_heightmap(z_mm, print_width_mm, print_height_mm)
 
     print(f"Saving {out_path}...")
     solid.save(out_path)
     print("Done.")
     print(f"  Output version: v{version}")
-    print(f"\nPrint dimensions: {PRINT_WIDTH_MM} × {PRINT_HEIGHT_MM} × "
+    print(f"\nPrint dimensions: {print_width_mm} × {print_height_mm} × "
           f"{z_mm.max():.1f} mm (W × H × Z)")
 
 

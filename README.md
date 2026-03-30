@@ -6,13 +6,35 @@ Stl generator for map routes
 Run:
 
 ```bash
-python gpx_to_stl.py [optional_path_to_file.gpx]
+python gpx_to_stl.py --gpx stcuthbertsway.gpx
+```
+
+Examples:
+
+```bash
+# Override model dimensions
+python gpx_to_stl.py --gpx stcuthbertsway.gpx --width 120 --height 60
+
+# Adjust terrain geometry controls
+python gpx_to_stl.py --gpx stcuthbertsway.gpx --vertical-exag 8 --grid-res 250 --margin-frac 0.25
 ```
 
 Configuration is now in the top settings block of `gpx_to_stl.py`:
 
-- `GPX_FILE`: default GPX file used when no CLI argument is passed.
-- `ALLOW_CLI_GPX_OVERRIDE`: if `True`, `argv[1]` overrides `GPX_FILE`.
+- `GPX_FILE`: default GPX file used when `--gpx` is omitted.
+- Top-level dimensional and geometry constants are defaults that can be overridden from CLI.
+
+Named flags available:
+
+- `--gpx`
+- `--width`
+- `--height`
+- `--base-thickness`
+- `--ridge-height`
+- `--ridge-width`
+- `--vertical-exag`
+- `--grid-res`
+- `--margin-frac`
 
 For each GPX input, the script creates a dedicated artifact folder named after the GPX stem:
 
