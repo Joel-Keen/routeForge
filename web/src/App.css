@@ -1,0 +1,169 @@
+.app-shell {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem 1.2rem 2.5rem;
+}
+
+.hero {
+  margin-bottom: 1.4rem;
+}
+
+.kicker {
+  color: #0a7f5a;
+  font-size: 0.78rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  margin: 0;
+}
+
+.hero h1 {
+  margin: 0.15rem 0 0;
+  font-size: clamp(1.7rem, 3.2vw, 2.6rem);
+}
+
+.subtitle {
+  margin: 0.35rem 0 0;
+  color: #4d5759;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) 1fr;
+  gap: 1rem;
+}
+
+.panel {
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid #cad7d2;
+  border-radius: 14px;
+  padding: 1rem;
+  box-shadow: 0 10px 30px rgba(7, 35, 27, 0.08);
+}
+
+.controls h2,
+.preview h2 {
+  margin: 0 0 0.6rem;
+  font-size: 1rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.55rem;
+}
+
+.field span {
+  font-size: 0.78rem;
+  color: #3f4a4c;
+}
+
+.field input {
+  border: 1px solid #b8c8c2;
+  border-radius: 8px;
+  padding: 0.48rem 0.52rem;
+  font-size: 0.93rem;
+}
+
+.grid-fields {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.35rem 0.55rem;
+}
+
+.download {
+  width: 100%;
+  margin-top: 0.6rem;
+  border: none;
+  background: #0a7f5a;
+  color: #ffffff;
+  border-radius: 10px;
+  padding: 0.66rem 0.72rem;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.download:disabled {
+  background: #8ca29b;
+  cursor: not-allowed;
+}
+
+.error {
+  margin-top: 0.7rem;
+  color: #b42318;
+  font-size: 0.85rem;
+}
+
+.preview {
+  min-height: 540px;
+}
+
+.preview-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 0.55rem;
+}
+
+.preview-head p {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #4e6260;
+}
+
+.map {
+  height: 430px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid #cad7d2;
+}
+
+.stats {
+  margin-top: 0.7rem;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.35rem;
+}
+
+.stats p {
+  margin: 0;
+  font-size: 0.84rem;
+  background: #f0f7f4;
+  padding: 0.42rem 0.5rem;
+  border-radius: 8px;
+}
+
+.empty {
+  height: 430px;
+  border: 1px dashed #9db0a7;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  font-size: 0.95rem;
+  color: #516063;
+}
+
+.footnote {
+  margin-top: 0.7rem;
+  font-size: 0.82rem;
+  color: #5f6e71;
+}
+
+@media (max-width: 960px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .preview {
+    min-height: auto;
+  }
+
+  .map,
+  .empty {
+    height: 360px;
+  }
+
+  .stats {
+    grid-template-columns: 1fr;
+  }
+}

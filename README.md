@@ -59,3 +59,38 @@ The script enforces a fixed OpenElevation budget of:
 
 If your requested grid would exceed this cap, the script automatically reduces
 grid density while preserving the aspect ratio, then continues.
+
+## React web interface (in progress)
+
+A React + TypeScript frontend now exists in `web/` as the starting point for
+GitHub Pages hosting.
+
+Current MVP features:
+
+- Upload GPX file in browser
+- Adjust generation parameters
+- Dynamic 2D route and fitted-bounds preview
+- Live effective grid/request estimate with 25 x 400 budget rules
+- Browser-side STL generation and download from uploaded GPX route
+
+Run locally:
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+Build for production:
+
+```bash
+cd web
+npm run build
+```
+
+Deploy to GitHub Pages:
+
+```bash
+cd web
+npm run deploy
+```
