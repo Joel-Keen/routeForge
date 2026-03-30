@@ -5,15 +5,20 @@ Generates a 3D-printable STL terrain model from a GPX route file.
 Uses free SRTM 90m elevation data. No account required.
 
 Dependencies:
-    pip install gpxpy numpy scipy numpy-stl elevation requests
+    pip install gpxpy numpy scipy numpy-stl requests
 
 Usage:
-    python gpx_to_stl.py stcuthbertsway.gpx
+    python gpx_to_stl.py [optional_input.gpx]
 
 Output:
-    stcuthbertsway_terrain.stl
+    <gpx_stem>/<gpx_stem>_terrain_vN.stl
+
+Cache:
+    <gpx_stem>/elevation_cache.npy
+    <gpx_stem>/elevation_cache_meta.json
 
 Settings (edit below):
+    GPX_FILE            : Default GPX file path (used when no CLI arg)
     PRINT_WIDTH_MM      : X dimension of print bed footprint
     PRINT_HEIGHT_MM     : Y dimension of print bed footprint
     BASE_THICKNESS_MM   : Solid base below lowest terrain point
@@ -27,23 +32,123 @@ Settings (edit below):
 import sys
 import os
 import math
+import json
 import numpy as np
-from scipy.ndimage import gaussian_filter, map_coordinates
-from scipy.interpolate import RegularGridInterpolator
+from scipy.ndimage import gaussian_filter
 from stl import mesh as stl_mesh
 import gpxpy
 import gpxpy.gpx
 
 # ── User settings ──────────────────────────────────────────────────────────────
 PRINT_WIDTH_MM       = 100.0   # mm, X axis
-PRINT_HEIGHT_MM      = 50.0    # mm, Y axis
+PRINT_HEIGHT_MM      = 100.0    # mm, Y axis
 BASE_THICKNESS_MM    = 3.0     # mm, solid base
 VERTICAL_EXAG        = 10.0    # vertical exaggeration
-GRID_RESOLUTION      = 400     # cells along longer axis
-ROUTE_RIDGE_HEIGHT   = 0.6     # mm above terrain surface
-ROUTE_RIDGE_WIDTH_MM = 0.8     # mm, full width of ridge
-MARGIN_FRAC          = 0.05    # 5% margin around route bbox
+GRID_RESOLUTION      = 200     # cells along longer axis
+ROUTE_RIDGE_HEIGHT   = 4.0     # mm above terrain surface
+ROUTE_RIDGE_WIDTH_MM = 2.0     # mm, full width of ridge
+MARGIN_FRAC          = 0.2     # margin around route bbox
+GPX_FILE             = "stcuthbertsway.gpx"  # default GPX input
+ALLOW_CLI_GPX_OVERRIDE = True  # argv[1] overrides GPX_FILE when available
 # ──────────────────────────────────────────────────────────────────────────────
+
+
+def sanitise_name(name):
+    clean = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in name)
+    clean = clean.strip("_")
+    return clean or "route"
+
+
+def resolve_gpx_path(argv):
+    if ALLOW_CLI_GPX_OVERRIDE and len(argv) > 1:
+        return argv[1]
+    return GPX_FILE
+
+
+def get_artifact_paths(gpx_path):
+    abs_gpx = os.path.abspath(gpx_path)
+    stem = os.path.splitext(os.path.basename(abs_gpx))[0]
+    artifact_dir = os.path.join(os.path.dirname(abs_gpx), sanitise_name(stem))
+    os.makedirs(artifact_dir, exist_ok=True)
+    return {
+        "gpx_abs": abs_gpx,
+        "stem": stem,
+        "artifact_dir": artifact_dir,
+        "cache_npy": os.path.join(artifact_dir, "elevation_cache.npy"),
+        "cache_meta": os.path.join(artifact_dir, "elevation_cache_meta.json"),
+    }
+
+
+def next_versioned_stl_path(artifact_dir, stem):
+    prefix = f"{stem}_terrain_v"
+    max_version = 0
+    for file_name in os.listdir(artifact_dir):
+        if not (file_name.startswith(prefix) and file_name.endswith(".stl")):
+            continue
+        number = file_name[len(prefix):-4]
+        if number.isdigit():
+            max_version = max(max_version, int(number))
+    next_version = max_version + 1
+    out_name = f"{stem}_terrain_v{next_version}.stl"
+    return os.path.join(artifact_dir, out_name), next_version
+
+
+def build_cache_metadata(gpx_abs, lat_min, lat_max, lon_min, lon_max, nx, ny):
+    gpx_stat = os.stat(gpx_abs)
+    return {
+        "gpx_path": gpx_abs,
+        "gpx_size": int(gpx_stat.st_size),
+        "gpx_mtime_ns": int(gpx_stat.st_mtime_ns),
+        "print_width_mm": float(PRINT_WIDTH_MM),
+        "print_height_mm": float(PRINT_HEIGHT_MM),
+        "margin_frac": float(MARGIN_FRAC),
+        "nx": int(nx),
+        "ny": int(ny),
+        "lat_min": round(float(lat_min), 8),
+        "lat_max": round(float(lat_max), 8),
+        "lon_min": round(float(lon_min), 8),
+        "lon_max": round(float(lon_max), 8),
+    }
+
+
+def explain_cache_miss(cached_meta, expected_meta):
+    changed = [key for key, value in expected_meta.items() if cached_meta.get(key) != value]
+    if not changed:
+        return "cache metadata mismatch"
+    return "settings changed: " + ", ".join(changed)
+
+
+def load_or_fetch_elevation(cache_npy, cache_meta, expected_meta):
+    if os.path.exists(cache_npy) and os.path.exists(cache_meta):
+        try:
+            with open(cache_meta, "r", encoding="utf-8") as fh:
+                cached_meta = json.load(fh)
+            if cached_meta == expected_meta:
+                elev = np.load(cache_npy)
+                if elev.shape == (expected_meta["ny"], expected_meta["nx"]):
+                    print(f"  Cache hit: {cache_npy}")
+                    return elev
+                print("  Cache miss: cached elevation shape does not match expected grid")
+            else:
+                print(f"  Cache miss: {explain_cache_miss(cached_meta, expected_meta)}")
+        except Exception as exc:
+            print(f"  Cache miss: failed to read cache ({exc})")
+    else:
+        print("  Cache miss: no cache files found")
+
+    elev = fetch_srtm_elevation(
+        expected_meta["lat_min"],
+        expected_meta["lat_max"],
+        expected_meta["lon_min"],
+        expected_meta["lon_max"],
+        expected_meta["nx"],
+        expected_meta["ny"],
+    )
+    np.save(cache_npy, elev)
+    with open(cache_meta, "w", encoding="utf-8") as fh:
+        json.dump(expected_meta, fh, indent=2, sort_keys=True)
+    print(f"  Cached elevation grid: {cache_npy}")
+    return elev
 
 
 def parse_gpx(path):
@@ -287,11 +392,20 @@ def build_stl_from_heightmap(z_mm, print_w_mm, print_h_mm):
 
 
 def main():
-    gpx_path = sys.argv[1] if len(sys.argv) > 1 else "stcuthbertsway.gpx"
-    out_path = os.path.splitext(gpx_path)[0] + "_terrain.stl"
+    gpx_path = resolve_gpx_path(sys.argv)
+    artifacts = get_artifact_paths(gpx_path)
+    out_path, version = next_versioned_stl_path(artifacts["artifact_dir"], artifacts["stem"])
+
+    if not os.path.exists(artifacts["gpx_abs"]):
+        raise FileNotFoundError(f"GPX file not found: {artifacts['gpx_abs']}")
+
+    print(f"Using GPX: {artifacts['gpx_abs']}")
+    print(f"Artifact directory: {artifacts['artifact_dir']}")
 
     print("Parsing GPX...")
-    route_pts = parse_gpx(gpx_path)
+    route_pts = parse_gpx(artifacts["gpx_abs"])
+    if not route_pts:
+        raise ValueError("No track or route points found in GPX file")
     print(f"  {len(route_pts)} track points")
 
     lat_min, lat_max, lon_min, lon_max = compute_bbox(route_pts, MARGIN_FRAC)
@@ -314,8 +428,13 @@ def main():
 
     print(f"  Grid: {nx} × {ny} (cols × rows)")
 
-    print("Fetching SRTM elevation data (Open Elevation API)...")
-    elev = fetch_srtm_elevation(lat_min, lat_max, lon_min, lon_max, nx, ny)
+    print("Loading cached elevation data or fetching from Open Elevation API...")
+    expected_meta = build_cache_metadata(
+        artifacts["gpx_abs"], lat_min, lat_max, lon_min, lon_max, nx, ny
+    )
+    elev = load_or_fetch_elevation(
+        artifacts["cache_npy"], artifacts["cache_meta"], expected_meta
+    )
     print(f"  Elevation range: {elev.min():.0f}–{elev.max():.0f} m")
 
     # Smooth slightly to reduce SRTM artefacts
@@ -344,6 +463,7 @@ def main():
     print(f"Saving {out_path}...")
     solid.save(out_path)
     print("Done.")
+    print(f"  Output version: v{version}")
     print(f"\nPrint dimensions: {PRINT_WIDTH_MM} × {PRINT_HEIGHT_MM} × "
           f"{z_mm.max():.1f} mm (W × H × Z)")
 
