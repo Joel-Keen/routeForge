@@ -79,7 +79,6 @@ export function TerrainPreview3D({ topValues, nx, ny, width, height }: TerrainPr
       <directionalLight position={[30, -20, 40]} intensity={0.8} />
       <TerrainMesh topValues={topValues} nx={nx} ny={ny} width={width} height={height} />
       <OrbitControls enablePan enableZoom enableRotate />
-      <gridHelper args={[Math.max(width, height), 12, '#78948b', '#c1d0cb']} position={[0, 0, -0.5]} />
     </Canvas>
   )
 }
