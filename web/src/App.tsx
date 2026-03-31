@@ -555,11 +555,7 @@ function App() {
   return (
     <main className="app-shell">
       <header className="hero">
-        <p className="kicker">RouteForge Web MVP</p>
-        <h1>GPX to STL Studio</h1>
-        <p className="subtitle">
-          Upload a GPX route, tune print settings, and preview effective terrain bounds.
-        </p>
+        <h1>Routeforge</h1>
       </header>
 
       <section className="layout">
