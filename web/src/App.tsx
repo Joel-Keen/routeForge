@@ -16,6 +16,7 @@ import type {
   TerrainWorkerMessage,
   TerrainWorkerResponse,
 } from './types/terrain'
+import { parseGoogleMapsRoute } from './parsers/googleMapsRoute'
 import './App.css'
 
 const DEFAULT_PARAMS: Params = {
@@ -147,6 +148,8 @@ function FitToBounds({ bounds }: { bounds: LatLngBoundsExpression | null }) {
 function App() {
   const [params, setParams] = useState<Params>(DEFAULT_PARAMS)
   const [fileName, setFileName] = useState('')
+  const [mapsUrl, setMapsUrl] = useState('')
+  const [mapsMessage, setMapsMessage] = useState('')
   const [points, setPoints] = useState<Point[]>([])
   const [error, setError] = useState('')
   const [generationMessage, setGenerationMessage] = useState('')
@@ -226,6 +229,7 @@ function App() {
       }
       setPoints(parsed)
       setFileName(file.name)
+      setMapsMessage('Using GPX upload as route source.')
       setError('')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to parse GPX file.')
@@ -236,6 +240,30 @@ function App() {
 
   const updateParam = (key: keyof Params, value: number) => {
     setParams((old) => ({ ...old, [key]: value }))
+  }
+
+  const handleMapsConvert = () => {
+    if (isGenerating) return
+
+    try {
+      const parsed = parseGoogleMapsRoute(mapsUrl)
+      setPoints(parsed.points)
+      setFileName('google-maps-route')
+      setError('')
+      setMapsMessage(
+        parsed.warning
+          ? `Parsed ${parsed.points.length} points from link. ${parsed.warning}`
+          : `Parsed ${parsed.points.length} points from Google Maps link.`,
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not parse Google Maps link.')
+      setMapsMessage('')
+    }
+  }
+
+  const clearMapsLink = () => {
+    setMapsUrl('')
+    setMapsMessage('')
   }
 
   const ensureWorker = () => {
@@ -336,6 +364,36 @@ function App() {
             <span>GPX file</span>
             <input type="file" accept=".gpx" onChange={handleUpload} />
           </label>
+
+          <label className="field">
+            <span>Google Maps directions link</span>
+            <textarea
+              className="maps-link"
+              value={mapsUrl}
+              onChange={(e) => setMapsUrl(e.target.value)}
+              placeholder="Paste full Google Maps route URL"
+              rows={3}
+            />
+          </label>
+
+          <div className="link-actions">
+            <button
+              className="convert"
+              disabled={!mapsUrl.trim() || isGenerating}
+              onClick={handleMapsConvert}
+            >
+              Convert Link to Route
+            </button>
+            <button className="clear-link" disabled={!mapsUrl.trim() || isGenerating} onClick={clearMapsLink}>
+              Clear Link
+            </button>
+          </div>
+
+          <p className="source-note">
+            Link parsing is best-effort in browser. If conversion fails, upload GPX instead.
+          </p>
+
+          {mapsMessage && <p className="status">{mapsMessage}</p>}
 
           <h2>Parameters</h2>
           <div className="grid-fields">
