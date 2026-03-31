@@ -294,6 +294,7 @@ function App() {
   const previewAspectAtRequestRef = useRef<number | null>(null)
   const previewParamSignatureAtRequestRef = useRef<string>('')
   const pendingStlAfterRecomputeRef = useRef(false)
+  const lastNonRectangleHeightRef = useRef<number>(DEFAULT_PARAMS.height)
 
   const isPreviewLocked = cachedTerrainPreview !== null
   const effectiveParams = useMemo(
@@ -411,6 +412,12 @@ function App() {
   }, [cachedTerrainPreview, inputMode, rectangleBounds, params.width])
 
   useEffect(() => {
+    if (inputMode === 'rectangle' || isPreviewLocked) return
+    if (!Number.isFinite(params.height) || params.height <= 0) return
+    lastNonRectangleHeightRef.current = params.height
+  }, [inputMode, isPreviewLocked, params.height])
+
+  useEffect(() => {
     if (viewMode !== '3d' || !cachedTerrainPreview || isGenerating) return
 
     const signature = buildPreviewParamSignature(effectiveParams)
@@ -503,13 +510,22 @@ function App() {
     }
 
     if (mode === 'rectangle' && inputMode !== 'rectangle') {
+      if (viewMode === '2d' && Number.isFinite(params.height) && params.height > 0) {
+        lastNonRectangleHeightRef.current = params.height
+      }
       setEmbossPreferenceBeforeRectangle(params.embossRoute)
       setParams((old) => ({ ...old, embossRoute: false }))
       setMapsMessage('')
     }
 
     if (inputMode === 'rectangle' && mode !== 'rectangle') {
-      setParams((old) => ({ ...old, embossRoute: embossPreferenceBeforeRectangle }))
+      setParams((old) => {
+        const next = { ...old, embossRoute: embossPreferenceBeforeRectangle }
+        if (viewMode === '2d' && Number.isFinite(lastNonRectangleHeightRef.current) && lastNonRectangleHeightRef.current > 0) {
+          next.height = lastNonRectangleHeightRef.current
+        }
+        return next
+      })
       setRectangleDraftBounds(null)
       setIsRectangleDrawArmed(false)
     }
