@@ -1,79 +1,20 @@
 # routeForge
-Stl generator for map routes
 
-## Current workflow
+routeForge is a React + TypeScript web app that turns route data into printable terrain STL models in the browser.
 
-Run:
+## What the app does
 
-```bash
-python gpx_to_stl.py --gpx stcuthbertsway.gpx
-```
+- Supports three route/input modes:
+	- GPX upload
+	- Google Maps link parsing (best effort)
+	- Draw rectangle directly on the 2D map
+- Generates browser-side terrain meshes from OpenElevation data.
+- Supports optional route embossing (disabled automatically in rectangle mode).
+- Shows dynamic 2D preview and dynamic 3D preview.
+- Includes generation progress updates for OpenElevation fetch stages.
+- Exports STL for 3D printing.
 
-Examples:
-
-```bash
-# Override model dimensions
-python gpx_to_stl.py --gpx stcuthbertsway.gpx --width 120 --height 60
-
-# Adjust terrain geometry controls
-python gpx_to_stl.py --gpx stcuthbertsway.gpx --vertical-exag 8 --grid-res 250 --margin-frac 0.25
-```
-
-Configuration is now in the top settings block of `gpx_to_stl.py`:
-
-- `GPX_FILE`: default GPX file used when `--gpx` is omitted.
-- Top-level dimensional and geometry constants are defaults that can be overridden from CLI.
-
-Named flags available:
-
-- `--gpx`
-- `--width`
-- `--height`
-- `--base-thickness`
-- `--ridge-height`
-- `--ridge-width`
-- `--vertical-exag`
-- `--grid-res`
-- `--margin-frac`
-
-For each GPX input, the script creates a dedicated artifact folder named after the GPX stem:
-
-- `<gpx_stem>/elevation_cache.npy`
-- `<gpx_stem>/elevation_cache_meta.json`
-- `<gpx_stem>/<gpx_stem>_terrain_v1.stl`, `_v2.stl`, ...
-
-Elevation data is reused from cache and only re-downloaded when any cache key value changes, including:
-
-- GPX file identity (path, size, or mtime)
-- `PRINT_WIDTH_MM`
-- `PRINT_HEIGHT_MM`
-- `MARGIN_FRAC`
-- computed grid/bbox parameters
-
-## OpenElevation request cap
-
-The script enforces a fixed OpenElevation budget of:
-
-- 25 HTTP requests maximum
-- 400 points per request
-
-If your requested grid would exceed this cap, the script automatically reduces
-grid density while preserving the aspect ratio, then continues.
-
-## React web interface (in progress)
-
-A React + TypeScript frontend now exists in `web/` as the starting point for
-GitHub Pages hosting.
-
-Current MVP features:
-
-- Upload GPX file in browser
-- Adjust generation parameters
-- Dynamic 2D route and fitted-bounds preview
-- Live effective grid/request estimate with 25 x 400 budget rules
-- Browser-side STL generation and download from uploaded GPX route
-
-Run locally:
+## Local development
 
 ```bash
 cd web
@@ -81,19 +22,35 @@ npm install
 npm run dev
 ```
 
-Build for production:
+## Production build
 
 ```bash
 cd web
 npm run build
 ```
 
-Deploy to GitHub Pages:
+## Deploy to GitHub Pages (branch-based)
+
+1. In repository Settings -> Pages:
+	 - Source: Deploy from a branch
+	 - Branch: gh-pages
+	 - Folder: /(root)
+2. Publish:
 
 ```bash
 cd web
 npm run deploy
 ```
 
-In repository Settings -> Pages, set Source to `Deploy from a branch`,
-Branch to `gh-pages`, and Folder to `/(root)`.
+This command builds the app and pushes web/dist to the gh-pages branch.
+
+## Pages URL
+
+The project page is:
+
+https://<your-user>.github.io/routeForge/
+
+## License note
+
+MIT License Copyright (c) 2026 Joel Keen.
+Terrain generation uses OpenElevation data.
