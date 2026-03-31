@@ -276,6 +276,7 @@ function App() {
   const workerRef = useRef<Worker | null>(null)
   const activeRunIdRef = useRef<string>('')
   const activeStemRef = useRef<string>('route')
+  const previewAspectAtRequestRef = useRef<number | null>(null)
 
   const isPreviewLocked = cachedTerrainPreview !== null
 
@@ -374,10 +375,13 @@ function App() {
     const rectangleAspect = inputMode === 'rectangle' && rectangleBounds
       ? geoAspect(rectangleBounds)
       : null
-    const aspect = Math.max(1e-6, lockedAspect ?? rectangleAspect ?? 0)
-    if (aspect <= 0) return
+    const sourceAspect = lockedAspect ?? rectangleAspect
+    if (sourceAspect === null || !Number.isFinite(sourceAspect) || sourceAspect <= 0) return
+
+    const aspect = Math.max(1e-6, sourceAspect)
 
     const targetHeight = Number((params.width / aspect).toFixed(2))
+    if (!Number.isFinite(targetHeight) || targetHeight <= 0) return
 
     setParams((old) => {
       if (Math.abs(old.height - targetHeight) < 1e-6) return old
@@ -528,14 +532,23 @@ function App() {
 
       if (message.kind === 'done-preview3d') {
         const fitted = preview?.fittedGeo
-        const previewAspect = fitted
+        const previewAspect = previewAspectAtRequestRef.current
+          ?? (fitted
           ? geoAspect({
               latMin: fitted.latMin,
               latMax: fitted.latMax,
               lonMin: fitted.lonMin,
               lonMax: fitted.lonMax,
             })
-          : Math.max(1e-6, params.width / Math.max(1e-6, params.height))
+          : null)
+
+        if (previewAspect === null || !Number.isFinite(previewAspect) || previewAspect <= 0) {
+          setError('Could not lock preview aspect for 3D mode. Please try generating 3D preview again.')
+          setIsGenerating(false)
+          setActiveTask(null)
+          setFetchProgressPct(null)
+          return
+        }
 
         setCachedTerrainPreview({
           nx: message.payload.nx,
@@ -645,6 +658,12 @@ function App() {
 
     const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
     activeRunIdRef.current = runId
+    previewAspectAtRequestRef.current = geoAspect({
+      latMin: preview.fittedGeo.latMin,
+      latMax: preview.fittedGeo.latMax,
+      lonMin: preview.fittedGeo.lonMin,
+      lonMax: preview.fittedGeo.lonMax,
+    })
     setError('')
     setIsGenerating(true)
     setActiveTask('preview3d')
