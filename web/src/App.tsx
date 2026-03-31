@@ -252,6 +252,7 @@ function App() {
 
   const [error, setError] = useState('')
   const [generationMessage, setGenerationMessage] = useState('')
+  const [fetchProgressPct, setFetchProgressPct] = useState<number | null>(null)
   const [isGenerating, setIsGenerating] = useState(false)
 
   const workerRef = useRef<Worker | null>(null)
@@ -473,11 +474,15 @@ function App() {
 
       if (message.kind === 'progress') {
         setGenerationMessage(message.message)
+        if (message.stage === 'fetch' && typeof message.progressPct === 'number') {
+          setFetchProgressPct(message.progressPct)
+        }
         return
       }
 
       if (message.kind === 'done') {
         setIsGenerating(false)
+        setFetchProgressPct(100)
         setGenerationMessage('STL generated successfully')
         triggerStlDownload(message.stlText, activeStemRef.current)
         return
@@ -485,10 +490,12 @@ function App() {
 
       if (message.kind === 'error') {
         if (message.error === 'Cancelled') {
+          setFetchProgressPct(null)
           setGenerationMessage('Generation cancelled')
           return
         }
         setError(message.error)
+        setFetchProgressPct(null)
         setGenerationMessage('Generation failed')
       }
       setIsGenerating(false)
@@ -521,6 +528,7 @@ function App() {
         : activeFileName.replace(/\.gpx$/i, '') || 'route'
     setError('')
     setIsGenerating(true)
+    setFetchProgressPct(0)
     setGenerationMessage('Starting generation worker')
 
     const worker = ensureWorker()
@@ -550,12 +558,13 @@ function App() {
       runId: activeRunIdRef.current,
     } satisfies TerrainWorkerMessage)
     setIsGenerating(false)
+    setFetchProgressPct(null)
   }
 
   return (
     <main className="app-shell">
       <header className="hero">
-        <h1>Routeforge</h1>
+        <h1>routeForge</h1>
       </header>
 
       <section className="layout">
@@ -693,7 +702,7 @@ function App() {
               />
             </label>
             <label className="field">
-              <span>Grid res</span>
+              <span>Grid Resolution</span>
               <input
                 type="number"
                 value={params.gridRes}
@@ -702,7 +711,7 @@ function App() {
               />
             </label>
             <label className="field">
-              <span>Margin frac</span>
+              <span>Margin Factor</span>
               <input
                 type="number"
                 value={params.marginFrac}
@@ -756,6 +765,16 @@ function App() {
           <button className="cancel" disabled={!isGenerating} onClick={cancelGeneration}>
             Cancel Generation
           </button>
+
+          {isGenerating && fetchProgressPct !== null && (
+            <div className="fetch-progress" aria-live="polite">
+              <div className="fetch-progress-head">
+                <span>OpenElevation Data</span>
+                <span>{fetchProgressPct}%</span>
+              </div>
+              <progress max={100} value={fetchProgressPct} />
+            </div>
+          )}
 
           {generationMessage && <p className="status">{generationMessage}</p>}
           {error && <p className="error">{error}</p>}

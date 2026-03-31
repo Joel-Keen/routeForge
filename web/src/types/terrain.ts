@@ -76,6 +76,7 @@ export type TerrainWorkerProgress = {
     | 'mesh'
     | 'serialize'
   message: string
+  progressPct?: number
 }
 
 export type TerrainWorkerDone = {

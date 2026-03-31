@@ -32,8 +32,13 @@ function assertNotCancelled(runId: string) {
   }
 }
 
-function postProgress(runId: string, stage: TerrainWorkerProgress['stage'], message: string) {
-  const payload: TerrainWorkerResponse = { kind: 'progress', runId, stage, message }
+function postProgress(
+  runId: string,
+  stage: TerrainWorkerProgress['stage'],
+  message: string,
+  progressPct?: number,
+) {
+  const payload: TerrainWorkerResponse = { kind: 'progress', runId, stage, message, progressPct }
   postMessage(payload)
 }
 
@@ -147,6 +152,8 @@ async function fetchElevationGrid(
   const lonSpan = lonMax - lonMin
   const elevations = new Float32Array(totalPoints)
 
+  postProgress(runId, 'fetch', `Fetching elevation data (0/${requestCount} batches)`, 0)
+
   for (let start = 0; start < totalPoints; start += BATCH_SIZE) {
     assertNotCancelled(runId)
     const end = Math.min(totalPoints, start + BATCH_SIZE)
@@ -207,6 +214,16 @@ async function fetchElevationGrid(
           for (let i = 0; i < payload.results.length; i += 1) {
             elevations[start + i] = payload.results[i].elevation
           }
+
+          const completedBatches = Math.ceil(end / BATCH_SIZE)
+          const progressPct = Math.min(100, Math.round((completedBatches / requestCount) * 100))
+          postProgress(
+            runId,
+            'fetch',
+            `Fetching elevation data (${completedBatches}/${requestCount} batches)`,
+            progressPct,
+          )
+
           success = true
           break
         } catch (err) {
