@@ -43,6 +43,7 @@ const BATCH_SIZE = 400
 const MAX_REQUESTS = 25
 type NumericParamKey = Exclude<keyof Params, 'embossRoute'>
 type InputMode = 'gpx' | 'maps' | 'rectangle'
+type NonRectangleMode = Exclude<InputMode, 'rectangle'>
 type ViewMode = '2d' | '3d'
 type WorkerTask = 'stl' | 'preview3d' | 'stl-from-cache' | 'preview3d-recompute'
 
@@ -294,7 +295,10 @@ function App() {
   const previewAspectAtRequestRef = useRef<number | null>(null)
   const previewParamSignatureAtRequestRef = useRef<string>('')
   const pendingStlAfterRecomputeRef = useRef(false)
-  const lastNonRectangleHeightRef = useRef<number>(DEFAULT_PARAMS.height)
+  const modeDimensionsRef = useRef<Record<NonRectangleMode, { width: number; height: number }>>({
+    gpx: { width: DEFAULT_PARAMS.width, height: DEFAULT_PARAMS.height },
+    maps: { width: DEFAULT_PARAMS.width, height: DEFAULT_PARAMS.height },
+  })
 
   const isPreviewLocked = cachedTerrainPreview !== null
   const effectiveParams = useMemo(
@@ -412,10 +416,14 @@ function App() {
   }, [cachedTerrainPreview, inputMode, rectangleBounds, params.width])
 
   useEffect(() => {
-    if (inputMode === 'rectangle' || isPreviewLocked) return
+    if (viewMode !== '2d' || inputMode === 'rectangle' || isPreviewLocked) return
+    if (!Number.isFinite(params.width) || params.width <= 0) return
     if (!Number.isFinite(params.height) || params.height <= 0) return
-    lastNonRectangleHeightRef.current = params.height
-  }, [inputMode, isPreviewLocked, params.height])
+    modeDimensionsRef.current[inputMode] = {
+      width: params.width,
+      height: params.height,
+    }
+  }, [viewMode, inputMode, isPreviewLocked, params.width, params.height])
 
   useEffect(() => {
     if (viewMode !== '3d' || !cachedTerrainPreview || isGenerating) return
@@ -503,29 +511,51 @@ function App() {
   const handleModeSwitch = (mode: InputMode) => {
     if (mode === inputMode) return
 
+    const is2dUnlocked = viewMode === '2d' && !isPreviewLocked
+    if (is2dUnlocked && inputMode !== 'rectangle') {
+      if (Number.isFinite(params.width) && params.width > 0 && Number.isFinite(params.height) && params.height > 0) {
+        modeDimensionsRef.current[inputMode] = {
+          width: params.width,
+          height: params.height,
+        }
+      }
+    }
+
     if (isPreviewLocked) {
       setViewMode('2d')
       setCachedTerrainPreview(null)
       pendingStlAfterRecomputeRef.current = false
     }
 
-    if (mode === 'rectangle' && inputMode !== 'rectangle') {
-      if (viewMode === '2d' && Number.isFinite(params.height) && params.height > 0) {
-        lastNonRectangleHeightRef.current = params.height
-      }
+    const enteringRectangle = mode === 'rectangle' && inputMode !== 'rectangle'
+    const leavingRectangle = inputMode === 'rectangle' && mode !== 'rectangle'
+
+    if (enteringRectangle) {
       setEmbossPreferenceBeforeRectangle(params.embossRoute)
-      setParams((old) => ({ ...old, embossRoute: false }))
       setMapsMessage('')
     }
 
-    if (inputMode === 'rectangle' && mode !== 'rectangle') {
+    if (enteringRectangle || leavingRectangle || (is2dUnlocked && mode !== 'rectangle')) {
       setParams((old) => {
-        const next = { ...old, embossRoute: embossPreferenceBeforeRectangle }
-        if (viewMode === '2d' && Number.isFinite(lastNonRectangleHeightRef.current) && lastNonRectangleHeightRef.current > 0) {
-          next.height = lastNonRectangleHeightRef.current
+        const next = { ...old }
+        if (enteringRectangle) {
+          next.embossRoute = false
+        }
+        if (leavingRectangle) {
+          next.embossRoute = embossPreferenceBeforeRectangle
+        }
+        if (is2dUnlocked && mode !== 'rectangle') {
+          const saved = modeDimensionsRef.current[mode]
+          if (saved && Number.isFinite(saved.width) && saved.width > 0 && Number.isFinite(saved.height) && saved.height > 0) {
+            next.width = saved.width
+            next.height = saved.height
+          }
         }
         return next
       })
+    }
+
+    if (leavingRectangle) {
       setRectangleDraftBounds(null)
       setIsRectangleDrawArmed(false)
     }
