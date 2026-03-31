@@ -2,7 +2,6 @@
   "name": "web",
   "private": true,
   "version": "0.0.0",
-  "homepage": "https://joel-keen.github.io/routeForge/",
   "type": "module",
   "scripts": {
     "dev": "vite",

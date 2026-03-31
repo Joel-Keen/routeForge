@@ -3,6 +3,7 @@ import type { ChangeEvent } from 'react'
 import { gpx as toGeoJsonGpx } from '@tmcw/togeojson'
 import {
   MapContainer,
+  useMapEvents,
   Polyline,
   Rectangle,
   TileLayer,
@@ -34,6 +35,44 @@ const DEFAULT_PARAMS: Params = {
 const BATCH_SIZE = 400
 const MAX_REQUESTS = 25
 type NumericParamKey = Exclude<keyof Params, 'embossRoute'>
+type InputMode = 'gpx' | 'maps' | 'rectangle'
+
+type GeoBounds = {
+  latMin: number
+  latMax: number
+  lonMin: number
+  lonMax: number
+}
+
+const DEFAULT_MAP_BOUNDS: LatLngBoundsExpression = [
+  [49.8, -7.8],
+  [58.9, 2.2],
+]
+
+function toLatLngBounds(bounds: GeoBounds): LatLngBoundsExpression {
+  return [
+    [bounds.latMin, bounds.lonMin],
+    [bounds.latMax, bounds.lonMax],
+  ]
+}
+
+function normalizeGeoBounds(aLat: number, aLon: number, bLat: number, bLon: number): GeoBounds {
+  return {
+    latMin: Math.min(aLat, bLat),
+    latMax: Math.max(aLat, bLat),
+    lonMin: Math.min(aLon, bLon),
+    lonMax: Math.max(aLon, bLon),
+  }
+}
+
+function geoAspect(bounds: GeoBounds) {
+  const latSpan = Math.max(1e-9, bounds.latMax - bounds.latMin)
+  const lonSpan = Math.max(1e-9, bounds.lonMax - bounds.lonMin)
+  const midLat = (bounds.latMin + bounds.latMax) / 2
+  const latKm = latSpan * 111
+  const lonKm = lonSpan * 111 * Math.max(0.01, Math.abs(Math.cos((midLat * Math.PI) / 180)))
+  return lonKm / latKm
+}
 
 function fitBoundsToAspect(
   latMin: number,
@@ -147,13 +186,70 @@ function FitToBounds({ bounds }: { bounds: LatLngBoundsExpression | null }) {
   return null
 }
 
+function RectangleDrawLayer({
+  enabled,
+  armed,
+  onDraft,
+  onComplete,
+  onBegin,
+}: {
+  enabled: boolean
+  armed: boolean
+  onDraft: (bounds: GeoBounds) => void
+  onComplete: (bounds: GeoBounds) => void
+  onBegin: () => void
+}) {
+  const dragStartRef = useRef<{ lat: number; lon: number } | null>(null)
+
+  const map = useMapEvents({
+    mousedown(event) {
+      if (!enabled || !armed) return
+      dragStartRef.current = { lat: event.latlng.lat, lon: event.latlng.lng }
+      onBegin()
+      map.dragging.disable()
+      map.doubleClickZoom.disable()
+    },
+    mousemove(event) {
+      const start = dragStartRef.current
+      if (!enabled || !armed || !start) return
+      onDraft(normalizeGeoBounds(start.lat, start.lon, event.latlng.lat, event.latlng.lng))
+    },
+    mouseup(event) {
+      const start = dragStartRef.current
+      if (!enabled || !armed || !start) return
+      const bounds = normalizeGeoBounds(start.lat, start.lon, event.latlng.lat, event.latlng.lng)
+      dragStartRef.current = null
+      map.dragging.enable()
+      map.doubleClickZoom.enable()
+      onComplete(bounds)
+    },
+  })
+
+  useEffect(() => {
+    return () => {
+      map.dragging.enable()
+      map.doubleClickZoom.enable()
+    }
+  }, [map])
+
+  return null
+}
+
 function App() {
+  const [inputMode, setInputMode] = useState<InputMode>('gpx')
   const [params, setParams] = useState<Params>(DEFAULT_PARAMS)
-  const [fileName, setFileName] = useState('')
+  const [gpxFileName, setGpxFileName] = useState('')
+  const [gpxPoints, setGpxPoints] = useState<Point[]>([])
+
   const [mapsUrl, setMapsUrl] = useState('')
   const [mapsMessage, setMapsMessage] = useState('')
-  const [routeSource, setRouteSource] = useState<'gpx' | 'maps' | null>(null)
-  const [points, setPoints] = useState<Point[]>([])
+  const [mapsPoints, setMapsPoints] = useState<Point[]>([])
+
+  const [rectangleBounds, setRectangleBounds] = useState<GeoBounds | null>(null)
+  const [rectangleDraftBounds, setRectangleDraftBounds] = useState<GeoBounds | null>(null)
+  const [isRectangleDrawArmed, setIsRectangleDrawArmed] = useState(false)
+  const [embossPreferenceBeforeRectangle, setEmbossPreferenceBeforeRectangle] = useState(true)
+
   const [error, setError] = useState('')
   const [generationMessage, setGenerationMessage] = useState('')
   const [isGenerating, setIsGenerating] = useState(false)
@@ -162,11 +258,43 @@ function App() {
   const activeRunIdRef = useRef<string>('')
   const activeStemRef = useRef<string>('route')
 
-  const preview = useMemo<PreviewModel | null>(() => {
-    if (points.length === 0) return null
+  const activePoints = useMemo(() => {
+    if (inputMode === 'gpx') return gpxPoints
+    if (inputMode === 'maps') return mapsPoints
+    return []
+  }, [inputMode, gpxPoints, mapsPoints])
 
-    const lats = points.map((p) => p.lat)
-    const lons = points.map((p) => p.lon)
+  const activeFileName = useMemo(() => {
+    if (inputMode === 'gpx') return gpxFileName
+    if (inputMode === 'maps') return 'google-maps-route'
+    return rectangleBounds ? 'drawn-rectangle-area' : ''
+  }, [inputMode, gpxFileName, rectangleBounds])
+
+  const preview = useMemo<PreviewModel | null>(() => {
+    if (inputMode === 'rectangle') {
+      if (!rectangleBounds) return null
+
+      const aspect = geoAspect(rectangleBounds)
+      const grid = estimateEffectiveGrid(params.gridRes, aspect)
+
+      return {
+        routeBounds: toLatLngBounds(rectangleBounds),
+        fittedBounds: toLatLngBounds(rectangleBounds),
+        polyline: [] as LatLngExpression[],
+        grid,
+        fittedGeo: {
+          latMin: rectangleBounds.latMin,
+          latMax: rectangleBounds.latMax,
+          lonMin: rectangleBounds.lonMin,
+          lonMax: rectangleBounds.lonMax,
+        },
+      }
+    }
+
+    if (activePoints.length === 0) return null
+
+    const lats = activePoints.map((p) => p.lat)
+    const lons = activePoints.map((p) => p.lon)
     const routeLatMin = Math.min(...lats)
     const routeLatMax = Math.max(...lats)
     const routeLonMin = Math.min(...lons)
@@ -209,7 +337,7 @@ function App() {
         [fitted.latMin, fitted.lonMin],
         [fitted.latMax, fitted.lonMax],
       ] as LatLngBoundsExpression,
-      polyline: points.map((p) => [p.lat, p.lon]) as LatLngExpression[],
+      polyline: activePoints.map((p) => [p.lat, p.lon]) as LatLngExpression[],
       grid,
       fittedGeo: {
         latMin: fitted.latMin,
@@ -218,7 +346,19 @@ function App() {
         lonMax: fitted.lonMax,
       },
     }
-  }, [points, params])
+  }, [activePoints, inputMode, params, rectangleBounds])
+
+  useEffect(() => {
+    if (inputMode !== 'rectangle' || !rectangleBounds) return
+
+    const aspect = Math.max(1e-6, geoAspect(rectangleBounds))
+    const targetHeight = Number((params.width / aspect).toFixed(2))
+
+    setParams((old) => {
+      if (Math.abs(old.height - targetHeight) < 1e-6) return old
+      return { ...old, height: targetHeight }
+    })
+  }, [inputMode, rectangleBounds, params.width])
 
   const handleUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -230,15 +370,14 @@ function App() {
       if (parsed.length === 0) {
         throw new Error('No track points found in GPX file.')
       }
-      setPoints(parsed)
-      setFileName(file.name)
-      setRouteSource('gpx')
+      setGpxPoints(parsed)
+      setGpxFileName(file.name)
       setMapsMessage('Using GPX upload as route source.')
       setError('')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to parse GPX file.')
-      setPoints([])
-      setFileName('')
+      setGpxPoints([])
+      setGpxFileName('')
     }
   }
 
@@ -251,9 +390,7 @@ function App() {
 
     try {
       const parsed = await parseGoogleMapsRoute(mapsUrl)
-      setPoints(parsed.points)
-      setFileName('google-maps-route')
-      setRouteSource('maps')
+      setMapsPoints(parsed.points)
       setError('')
       setMapsMessage(
         parsed.warning
@@ -269,6 +406,58 @@ function App() {
   const clearMapsLink = () => {
     setMapsUrl('')
     setMapsMessage('')
+    setMapsPoints([])
+  }
+
+  const handleModeSwitch = (mode: InputMode) => {
+    if (mode === inputMode) return
+
+    if (mode === 'rectangle' && inputMode !== 'rectangle') {
+      setEmbossPreferenceBeforeRectangle(params.embossRoute)
+      setParams((old) => ({ ...old, embossRoute: false }))
+      setMapsMessage('')
+    }
+
+    if (inputMode === 'rectangle' && mode !== 'rectangle') {
+      setParams((old) => ({ ...old, embossRoute: embossPreferenceBeforeRectangle }))
+      setRectangleDraftBounds(null)
+      setIsRectangleDrawArmed(false)
+    }
+
+    setError('')
+    setInputMode(mode)
+  }
+
+  const beginRectangleDraw = () => {
+    if (inputMode !== 'rectangle' || isGenerating) return
+    setError('')
+    setGenerationMessage('Drag on the map to draw a rectangle.')
+    setRectangleDraftBounds(null)
+    setIsRectangleDrawArmed(true)
+  }
+
+  const clearRectangle = () => {
+    if (isGenerating) return
+    setRectangleBounds(null)
+    setRectangleDraftBounds(null)
+    setIsRectangleDrawArmed(false)
+    setGenerationMessage('')
+  }
+
+  const handleRectangleComplete = (bounds: GeoBounds) => {
+    const latSpan = bounds.latMax - bounds.latMin
+    const lonSpan = bounds.lonMax - bounds.lonMin
+    if (latSpan <= 1e-9 || lonSpan <= 1e-9) {
+      setError('Rectangle is too small. Please draw a larger area.')
+      setIsRectangleDrawArmed(false)
+      return
+    }
+
+    setRectangleBounds(bounds)
+    setRectangleDraftBounds(null)
+    setIsRectangleDrawArmed(false)
+    setError('')
+    setGenerationMessage('Rectangle captured.')
   }
 
   const ensureWorker = () => {
@@ -319,19 +508,30 @@ function App() {
   const downloadStl = () => {
     if (!preview || isGenerating) return
 
+    if (inputMode === 'rectangle' && !rectangleBounds) {
+      setError('Draw a rectangle on the map before generating STL.')
+      return
+    }
+
     const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
     activeRunIdRef.current = runId
-    activeStemRef.current = fileName.replace(/\.gpx$/i, '') || 'route'
+    activeStemRef.current =
+      inputMode === 'rectangle'
+        ? 'drawn-rectangle-area'
+        : activeFileName.replace(/\.gpx$/i, '') || 'route'
     setError('')
     setIsGenerating(true)
     setGenerationMessage('Starting generation worker')
 
     const worker = ensureWorker()
+    const effectiveParams =
+      inputMode === 'rectangle' ? { ...params, embossRoute: false } : params
+
     const payload: TerrainWorkerMessage = {
       kind: 'generate',
       runId,
-      points,
-      params,
+      points: activePoints,
+      params: effectiveParams,
       preview: {
         grid: {
           nx: preview.grid.nx,
@@ -365,40 +565,95 @@ function App() {
       <section className="layout">
         <aside className="panel controls">
           <h2>Input</h2>
-          <label className="field">
-            <span>GPX file</span>
-            <input type="file" accept=".gpx" onChange={handleUpload} />
-          </label>
 
-          <label className="field">
-            <span>Google Maps directions link</span>
-            <textarea
-              className="maps-link"
-              value={mapsUrl}
-              onChange={(e) => setMapsUrl(e.target.value)}
-              placeholder="Paste full Google Maps route URL"
-              rows={3}
-            />
-          </label>
-
-          <div className="link-actions">
+          <div className="mode-toggle" role="tablist" aria-label="Route input mode">
             <button
-              className="convert"
-              disabled={!mapsUrl.trim() || isGenerating}
-              onClick={handleMapsConvert}
+              role="tab"
+              aria-selected={inputMode === 'gpx'}
+              className={inputMode === 'gpx' ? 'mode-tab active' : 'mode-tab'}
+              disabled={isGenerating}
+              onClick={() => handleModeSwitch('gpx')}
             >
-              Convert Link to Route
+              GPX
             </button>
-            <button className="clear-link" disabled={!mapsUrl.trim() || isGenerating} onClick={clearMapsLink}>
-              Clear Link
+            <button
+              role="tab"
+              aria-selected={inputMode === 'maps'}
+              className={inputMode === 'maps' ? 'mode-tab active' : 'mode-tab'}
+              disabled={isGenerating}
+              onClick={() => handleModeSwitch('maps')}
+            >
+              Google Maps
+            </button>
+            <button
+              role="tab"
+              aria-selected={inputMode === 'rectangle'}
+              className={inputMode === 'rectangle' ? 'mode-tab active' : 'mode-tab'}
+              disabled={isGenerating}
+              onClick={() => handleModeSwitch('rectangle')}
+            >
+              Draw Rectangle
             </button>
           </div>
 
-          <p className="source-note">
-            Link parsing is best-effort in browser. If conversion fails, upload GPX instead.
-          </p>
+          {inputMode === 'gpx' && (
+            <label className="field">
+              <span>GPX file</span>
+              <input type="file" accept=".gpx" onChange={handleUpload} />
+            </label>
+          )}
 
-          {mapsMessage && <p className="status">{mapsMessage}</p>}
+          {inputMode === 'maps' && (
+            <>
+              <label className="field">
+                <span>Google Maps directions link</span>
+                <textarea
+                  className="maps-link"
+                  value={mapsUrl}
+                  onChange={(e) => setMapsUrl(e.target.value)}
+                  placeholder="Paste full Google Maps route URL"
+                  rows={3}
+                />
+              </label>
+
+              <div className="link-actions">
+                <button
+                  className="convert"
+                  disabled={!mapsUrl.trim() || isGenerating}
+                  onClick={handleMapsConvert}
+                >
+                  Convert Link to Route
+                </button>
+                <button className="clear-link" disabled={!mapsUrl.trim() || isGenerating} onClick={clearMapsLink}>
+                  Clear Link
+                </button>
+              </div>
+
+              <p className="source-note">
+                Link parsing is best-effort in browser. If conversion fails, upload GPX instead.
+              </p>
+
+              {mapsMessage && <p className="status">{mapsMessage}</p>}
+            </>
+          )}
+
+          {inputMode === 'rectangle' && (
+            <div className="rectangle-tools">
+              <button className="convert" disabled={isGenerating || isRectangleDrawArmed} onClick={beginRectangleDraw}>
+                {isRectangleDrawArmed ? 'Draw mode active' : 'Draw Rectangle'}
+              </button>
+              <button
+                className="clear-link"
+                disabled={isGenerating || (!rectangleBounds && !rectangleDraftBounds)}
+                onClick={clearRectangle}
+              >
+                Clear Rectangle
+              </button>
+              <p className="source-note">
+                Click Draw Rectangle, then drag on the map preview. Height auto-scales from rectangle aspect.
+              </p>
+            </div>
+          )}
 
           <h2>Parameters</h2>
           <div className="grid-fields">
@@ -417,6 +672,7 @@ function App() {
                 type="number"
                 value={params.height}
                 min={1}
+                disabled={inputMode === 'rectangle'}
                 onChange={(e) => updateParam('height', Number(e.target.value))}
               />
             </label>
@@ -466,7 +722,7 @@ function App() {
                 value={params.ridgeHeight}
                 min={0}
                 step={0.1}
-                disabled={!params.embossRoute}
+                disabled={!params.embossRoute || inputMode === 'rectangle'}
                 onChange={(e) => updateParam('ridgeHeight', Number(e.target.value))}
               />
             </label>
@@ -477,7 +733,7 @@ function App() {
                 value={params.ridgeWidth}
                 min={0.1}
                 step={0.1}
-                disabled={!params.embossRoute}
+                disabled={!params.embossRoute || inputMode === 'rectangle'}
                 onChange={(e) => updateParam('ridgeWidth', Number(e.target.value))}
               />
             </label>
@@ -487,9 +743,14 @@ function App() {
             <input
               type="checkbox"
               checked={params.embossRoute}
+              disabled={inputMode === 'rectangle'}
               onChange={(e) => setParams((old) => ({ ...old, embossRoute: e.target.checked }))}
             />
-            <span>Emboss route onto terrain</span>
+            <span>
+              {inputMode === 'rectangle'
+                ? 'Emboss unavailable in rectangle mode'
+                : 'Emboss route onto terrain'}
+            </span>
           </label>
 
           <button className="download" disabled={!preview || isGenerating} onClick={downloadStl}>
@@ -501,50 +762,75 @@ function App() {
           </button>
 
           {generationMessage && <p className="status">{generationMessage}</p>}
-
           {error && <p className="error">{error}</p>}
         </aside>
 
         <section className="panel preview">
           <div className="preview-head">
             <h2>Dynamic 2D Preview</h2>
-            <p>{fileName || 'No route selected'}</p>
+            <p>{activeFileName || 'No route selected'}</p>
           </div>
 
-          {routeSource && (
-            <p className="source-chip">Source: {routeSource === 'gpx' ? 'GPX upload' : 'Google Maps link'}</p>
-          )}
+          <p className="source-chip">
+            Source: {inputMode === 'gpx' ? 'GPX upload' : inputMode === 'maps' ? 'Google Maps link' : 'Drawn rectangle'}
+          </p>
 
-          {preview ? (
+          {(preview || inputMode === 'rectangle') ? (
             <>
               <MapContainer
                 className="map"
-                bounds={preview.fittedBounds}
+                bounds={preview ? preview.fittedBounds : DEFAULT_MAP_BOUNDS}
                 scrollWheelZoom
               >
                 <TileLayer
                   attribution="&copy; OpenStreetMap contributors"
                   url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 />
-                <Polyline positions={preview.polyline} pathOptions={{ color: '#ff5e2e', weight: 4 }} />
-                <Rectangle bounds={preview.fittedBounds} pathOptions={{ color: '#0a7f5a', weight: 2 }} />
-                <FitToBounds bounds={preview.fittedBounds} />
+                {preview && preview.polyline.length > 0 && (
+                  <Polyline positions={preview.polyline} pathOptions={{ color: '#ff5e2e', weight: 4 }} />
+                )}
+                {(preview || rectangleDraftBounds || rectangleBounds) && (
+                  <Rectangle
+                    bounds={
+                      rectangleDraftBounds
+                        ? toLatLngBounds(rectangleDraftBounds)
+                        : rectangleBounds
+                          ? toLatLngBounds(rectangleBounds)
+                          : preview!.fittedBounds
+                    }
+                    pathOptions={{ color: '#0a7f5a', weight: 2 }}
+                  />
+                )}
+                <FitToBounds bounds={preview ? preview.fittedBounds : null} />
+                <RectangleDrawLayer
+                  enabled={inputMode === 'rectangle'}
+                  armed={isRectangleDrawArmed}
+                  onBegin={() => setError('')}
+                  onDraft={(bounds) => setRectangleDraftBounds(bounds)}
+                  onComplete={handleRectangleComplete}
+                />
               </MapContainer>
 
-              <div className="stats">
-                <p>
-                  Requested API calls: <strong>{preview.grid.requestedCalls}</strong>
-                </p>
-                <p>
-                  Effective grid: <strong>{preview.grid.nx} x {preview.grid.ny}</strong>
-                </p>
-                <p>
-                  Effective API calls: <strong>{preview.grid.effectiveCalls}</strong> / 25
-                </p>
-                <p>
-                  Auto-adjusted: <strong>{preview.grid.adjusted ? 'Yes' : 'No'}</strong>
-                </p>
-              </div>
+              {preview ? (
+                <div className="stats">
+                  <p>
+                    Requested API calls: <strong>{preview.grid.requestedCalls}</strong>
+                  </p>
+                  <p>
+                    Effective grid: <strong>{preview.grid.nx} x {preview.grid.ny}</strong>
+                  </p>
+                  <p>
+                    Effective API calls: <strong>{preview.grid.effectiveCalls}</strong> / 25
+                  </p>
+                  <p>
+                    Auto-adjusted: <strong>{preview.grid.adjusted ? 'Yes' : 'No'}</strong>
+                  </p>
+                </div>
+              ) : (
+                <div className="stats">
+                  <p>Draw a rectangle on the map to enable terrain generation.</p>
+                </div>
+              )}
             </>
           ) : (
             <div className="empty">Upload GPX or convert a Google Maps link to start previewing route coverage.</div>
