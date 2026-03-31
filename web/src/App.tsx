@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { gpx as toGeoJsonGpx } from '@tmcw/togeojson'
 import {
@@ -20,6 +20,12 @@ import type {
 import { parseGoogleMapsRoute } from './parsers/googleMapsRoute'
 import './App.css'
 
+const TerrainPreview3D = lazy(() =>
+  import('./components/TerrainPreview3D').then((module) => ({
+    default: module.TerrainPreview3D,
+  })),
+)
+
 const DEFAULT_PARAMS: Params = {
   width: 100,
   height: 100,
@@ -36,12 +42,21 @@ const BATCH_SIZE = 400
 const MAX_REQUESTS = 25
 type NumericParamKey = Exclude<keyof Params, 'embossRoute'>
 type InputMode = 'gpx' | 'maps' | 'rectangle'
+type ViewMode = '2d' | '3d'
+type WorkerTask = 'stl' | 'preview3d' | 'stl-from-cache'
 
 type GeoBounds = {
   latMin: number
   latMax: number
   lonMin: number
   lonMax: number
+}
+
+type CachedTerrainPreview = {
+  nx: number
+  ny: number
+  topValues: number[]
+  aspect: number
 }
 
 const DEFAULT_MAP_BOUNDS: LatLngBoundsExpression = [
@@ -237,6 +252,7 @@ function RectangleDrawLayer({
 
 function App() {
   const [inputMode, setInputMode] = useState<InputMode>('gpx')
+  const [viewMode, setViewMode] = useState<ViewMode>('2d')
   const [params, setParams] = useState<Params>(DEFAULT_PARAMS)
   const [gpxFileName, setGpxFileName] = useState('')
   const [gpxPoints, setGpxPoints] = useState<Point[]>([])
@@ -254,10 +270,14 @@ function App() {
   const [generationMessage, setGenerationMessage] = useState('')
   const [fetchProgressPct, setFetchProgressPct] = useState<number | null>(null)
   const [isGenerating, setIsGenerating] = useState(false)
+  const [activeTask, setActiveTask] = useState<WorkerTask | null>(null)
+  const [cachedTerrainPreview, setCachedTerrainPreview] = useState<CachedTerrainPreview | null>(null)
 
   const workerRef = useRef<Worker | null>(null)
   const activeRunIdRef = useRef<string>('')
   const activeStemRef = useRef<string>('route')
+
+  const isPreviewLocked = cachedTerrainPreview !== null
 
   const activePoints = useMemo(() => {
     if (inputMode === 'gpx') return gpxPoints
@@ -350,16 +370,20 @@ function App() {
   }, [activePoints, inputMode, params, rectangleBounds])
 
   useEffect(() => {
-    if (inputMode !== 'rectangle' || !rectangleBounds) return
+    const lockedAspect = cachedTerrainPreview?.aspect
+    const rectangleAspect = inputMode === 'rectangle' && rectangleBounds
+      ? geoAspect(rectangleBounds)
+      : null
+    const aspect = Math.max(1e-6, lockedAspect ?? rectangleAspect ?? 0)
+    if (aspect <= 0) return
 
-    const aspect = Math.max(1e-6, geoAspect(rectangleBounds))
     const targetHeight = Number((params.width / aspect).toFixed(2))
 
     setParams((old) => {
       if (Math.abs(old.height - targetHeight) < 1e-6) return old
       return { ...old, height: targetHeight }
     })
-  }, [inputMode, rectangleBounds, params.width])
+  }, [cachedTerrainPreview, inputMode, rectangleBounds, params.width])
 
   const handleUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -410,8 +434,21 @@ function App() {
     setMapsPoints([])
   }
 
+  const backTo2d = () => {
+    if (isGenerating || viewMode === '2d') return
+    setViewMode('2d')
+    setCachedTerrainPreview(null)
+    setFetchProgressPct(null)
+    setGenerationMessage('Returned to 2D preview. Generate 3D preview to download fresh elevation data.')
+  }
+
   const handleModeSwitch = (mode: InputMode) => {
     if (mode === inputMode) return
+
+    if (isPreviewLocked) {
+      setViewMode('2d')
+      setCachedTerrainPreview(null)
+    }
 
     if (mode === 'rectangle' && inputMode !== 'rectangle') {
       setEmbossPreferenceBeforeRectangle(params.embossRoute)
@@ -480,21 +517,49 @@ function App() {
         return
       }
 
-      if (message.kind === 'done') {
+      if (message.kind === 'done-stl') {
         setIsGenerating(false)
+        setActiveTask(null)
         setFetchProgressPct(100)
         setGenerationMessage('STL generated successfully')
         triggerStlDownload(message.stlText, activeStemRef.current)
         return
       }
 
+      if (message.kind === 'done-preview3d') {
+        const fitted = preview?.fittedGeo
+        const previewAspect = fitted
+          ? geoAspect({
+              latMin: fitted.latMin,
+              latMax: fitted.latMax,
+              lonMin: fitted.lonMin,
+              lonMax: fitted.lonMax,
+            })
+          : Math.max(1e-6, params.width / Math.max(1e-6, params.height))
+
+        setCachedTerrainPreview({
+          nx: message.payload.nx,
+          ny: message.payload.ny,
+          topValues: message.payload.topValues,
+          aspect: Math.max(1e-6, previewAspect),
+        })
+        setIsGenerating(false)
+        setActiveTask(null)
+        setFetchProgressPct(100)
+        setViewMode('3d')
+        setGenerationMessage('3D preview generated successfully')
+        return
+      }
+
       if (message.kind === 'error') {
         if (message.error === 'Cancelled') {
+          setActiveTask(null)
           setFetchProgressPct(null)
           setGenerationMessage('Generation cancelled')
           return
         }
         setError(message.error)
+        setActiveTask(null)
         setFetchProgressPct(null)
         setGenerationMessage('Generation failed')
       }
@@ -528,12 +593,31 @@ function App() {
         : activeFileName.replace(/\.gpx$/i, '') || 'route'
     setError('')
     setIsGenerating(true)
-    setFetchProgressPct(0)
-    setGenerationMessage('Starting generation worker')
+    setActiveTask(cachedTerrainPreview ? 'stl-from-cache' : 'stl')
+    setFetchProgressPct(cachedTerrainPreview ? null : 0)
+    setGenerationMessage(
+      cachedTerrainPreview
+        ? 'Building STL from cached preview data'
+        : 'Starting generation worker',
+    )
 
     const worker = ensureWorker()
     const effectiveParams =
       inputMode === 'rectangle' ? { ...params, embossRoute: false } : params
+
+    if (cachedTerrainPreview) {
+      worker.postMessage({
+        kind: 'stl-from-cache',
+        runId,
+        params: effectiveParams,
+        grid: {
+          nx: cachedTerrainPreview.nx,
+          ny: cachedTerrainPreview.ny,
+        },
+        topValues: cachedTerrainPreview.topValues,
+      } satisfies TerrainWorkerMessage)
+      return
+    }
 
     const payload: TerrainWorkerMessage = {
       kind: 'generate',
@@ -551,6 +635,41 @@ function App() {
     worker.postMessage(payload)
   }
 
+  const generate3dPreview = () => {
+    if (!preview || isGenerating) return
+
+    if (inputMode === 'rectangle' && !rectangleBounds) {
+      setError('Draw a rectangle on the map before generating 3D preview.')
+      return
+    }
+
+    const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+    activeRunIdRef.current = runId
+    setError('')
+    setIsGenerating(true)
+    setActiveTask('preview3d')
+    setFetchProgressPct(0)
+    setGenerationMessage('Downloading OpenElevation data for 3D preview')
+
+    const worker = ensureWorker()
+    const effectiveParams =
+      inputMode === 'rectangle' ? { ...params, embossRoute: false } : params
+
+    worker.postMessage({
+      kind: 'preview3d',
+      runId,
+      points: activePoints,
+      params: effectiveParams,
+      preview: {
+        grid: {
+          nx: preview.grid.nx,
+          ny: preview.grid.ny,
+        },
+        fittedGeo: preview.fittedGeo,
+      },
+    } satisfies TerrainWorkerMessage)
+  }
+
   const cancelGeneration = () => {
     if (!isGenerating || !workerRef.current) return
     workerRef.current.postMessage({
@@ -558,6 +677,7 @@ function App() {
       runId: activeRunIdRef.current,
     } satisfies TerrainWorkerMessage)
     setIsGenerating(false)
+    setActiveTask(null)
     setFetchProgressPct(null)
   }
 
@@ -677,7 +797,7 @@ function App() {
                 type="number"
                 value={params.height}
                 min={1}
-                disabled={inputMode === 'rectangle'}
+                disabled={inputMode === 'rectangle' || isPreviewLocked}
                 onChange={(e) => updateParam('height', Number(e.target.value))}
               />
             </label>
@@ -688,6 +808,7 @@ function App() {
                 value={params.base}
                 min={0.1}
                 step={0.1}
+                disabled={isPreviewLocked}
                 onChange={(e) => updateParam('base', Number(e.target.value))}
               />
             </label>
@@ -698,6 +819,7 @@ function App() {
                 value={params.verticalExag}
                 min={0.1}
                 step={0.1}
+                disabled={isPreviewLocked}
                 onChange={(e) => updateParam('verticalExag', Number(e.target.value))}
               />
             </label>
@@ -707,6 +829,7 @@ function App() {
                 type="number"
                 value={params.gridRes}
                 min={4}
+                disabled={isPreviewLocked}
                 onChange={(e) => updateParam('gridRes', Number(e.target.value))}
               />
             </label>
@@ -717,6 +840,7 @@ function App() {
                 value={params.marginFrac}
                 min={0}
                 step={0.01}
+                disabled={isPreviewLocked}
                 onChange={(e) => updateParam('marginFrac', Number(e.target.value))}
               />
             </label>
@@ -727,7 +851,7 @@ function App() {
                 value={params.ridgeHeight}
                 min={0}
                 step={0.1}
-                disabled={!params.embossRoute || inputMode === 'rectangle'}
+                disabled={!params.embossRoute || inputMode === 'rectangle' || isPreviewLocked}
                 onChange={(e) => updateParam('ridgeHeight', Number(e.target.value))}
               />
             </label>
@@ -738,7 +862,7 @@ function App() {
                 value={params.ridgeWidth}
                 min={0.1}
                 step={0.1}
-                disabled={!params.embossRoute || inputMode === 'rectangle'}
+                disabled={!params.embossRoute || inputMode === 'rectangle' || isPreviewLocked}
                 onChange={(e) => updateParam('ridgeWidth', Number(e.target.value))}
               />
             </label>
@@ -748,7 +872,7 @@ function App() {
             <input
               type="checkbox"
               checked={params.embossRoute}
-              disabled={inputMode === 'rectangle'}
+              disabled={inputMode === 'rectangle' || isPreviewLocked}
               onChange={(e) => setParams((old) => ({ ...old, embossRoute: e.target.checked }))}
             />
             <span>
@@ -758,6 +882,14 @@ function App() {
             </span>
           </label>
 
+          {isPreviewLocked && (
+            <p className="status">3D preview data locked. Width can be changed; use Back to 2D to unlock all parameters.</p>
+          )}
+
+          <button className="generate-preview" disabled={!preview || isGenerating} onClick={generate3dPreview}>
+            Generate 3D Preview
+          </button>
+
           <button className="download" disabled={!preview || isGenerating} onClick={downloadStl}>
             Download STL
           </button>
@@ -766,10 +898,14 @@ function App() {
             Cancel Generation
           </button>
 
+          <button className="back-2d" disabled={isGenerating || viewMode !== '3d'} onClick={backTo2d}>
+            Back to 2D
+          </button>
+
           {isGenerating && fetchProgressPct !== null && (
             <div className="fetch-progress" aria-live="polite">
               <div className="fetch-progress-head">
-                <span>OpenElevation Data</span>
+                <span>{activeTask === 'preview3d' ? 'OpenElevation Data (3D Preview)' : 'OpenElevation Data'}</span>
                 <span>{fetchProgressPct}%</span>
               </div>
               <progress max={100} value={fetchProgressPct} />
@@ -782,7 +918,7 @@ function App() {
 
         <section className="panel preview">
           <div className="preview-head">
-            <h2>Dynamic 2D Preview</h2>
+            <h2>{viewMode === '3d' ? 'Dynamic 3D Preview' : 'Dynamic 2D Preview'}</h2>
             <p>{activeFileName || 'No route selected'}</p>
           </div>
 
@@ -790,7 +926,19 @@ function App() {
             Source: {inputMode === 'gpx' ? 'GPX upload' : inputMode === 'maps' ? 'Google Maps link' : 'Drawn rectangle'}
           </p>
 
-          {(preview || inputMode === 'rectangle') ? (
+          {viewMode === '3d' && cachedTerrainPreview ? (
+            <div className="map preview-3d">
+              <Suspense fallback={<div className="preview-3d-loading">Loading 3D preview...</div>}>
+                <TerrainPreview3D
+                  topValues={cachedTerrainPreview.topValues}
+                  nx={cachedTerrainPreview.nx}
+                  ny={cachedTerrainPreview.ny}
+                  width={params.width}
+                  height={params.height}
+                />
+              </Suspense>
+            </div>
+          ) : (preview || inputMode === 'rectangle') ? (
             <>
               <MapContainer
                 className="map"
@@ -854,7 +1002,7 @@ function App() {
       </section>
 
       <footer className="footnote">
-        STL generation combines OpenElevation terrain with optional route embossing and watertight walls in browser worker.
+        MIT License Copyright (c) 2026 Joel Keen. STL generation combines OpenElevation (GPLv2) terrain with optional route embossing and watertight walls in browser.
       </footer>
     </main>
   )

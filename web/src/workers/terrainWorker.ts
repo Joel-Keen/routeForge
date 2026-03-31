@@ -129,6 +129,63 @@ function normalizeTerrainMm(elevation: Float32Array, params: Params) {
   return terrainMm
 }
 
+function buildStlFromTop(topFlipped: Float32Array, nx: number, ny: number, params: Params, runId: string) {
+  const vertexTop = (ix: number, iy: number): [number, number, number] => {
+    const x = (ix / Math.max(1, nx - 1)) * params.width
+    const y = (iy / Math.max(1, ny - 1)) * params.height
+    const z = topFlipped[iy * nx + ix]
+    return [x, y, z]
+  }
+
+  postProgress(runId, 'mesh', 'Building watertight mesh')
+
+  const lines: string[] = ['solid routeforge']
+
+  for (let iy = 0; iy < ny - 1; iy += 1) {
+    if (iy % 30 === 0) assertNotCancelled(runId)
+    for (let ix = 0; ix < nx - 1; ix += 1) {
+      const v00 = vertexTop(ix, iy)
+      const v10 = vertexTop(ix + 1, iy)
+      const v11 = vertexTop(ix + 1, iy + 1)
+      const v01 = vertexTop(ix, iy + 1)
+      tri(lines, v00, v10, v11)
+      tri(lines, v00, v11, v01)
+    }
+  }
+
+  tri(lines, [0, 0, 0], [params.width, params.height, 0], [params.width, 0, 0])
+  tri(lines, [0, 0, 0], [0, params.height, 0], [params.width, params.height, 0])
+
+  for (let ix = 0; ix < nx - 1; ix += 1) {
+    const t0 = vertexTop(ix, 0)
+    const t1 = vertexTop(ix + 1, 0)
+    tri(lines, [t0[0], t0[1], 0], [t1[0], t1[1], 0], t1)
+    tri(lines, [t0[0], t0[1], 0], t1, t0)
+  }
+  for (let ix = 0; ix < nx - 1; ix += 1) {
+    const t0 = vertexTop(ix, ny - 1)
+    const t1 = vertexTop(ix + 1, ny - 1)
+    tri(lines, [t0[0], t0[1], 0], t1, [t1[0], t1[1], 0])
+    tri(lines, [t0[0], t0[1], 0], t0, t1)
+  }
+  for (let iy = 0; iy < ny - 1; iy += 1) {
+    const t0 = vertexTop(0, iy)
+    const t1 = vertexTop(0, iy + 1)
+    tri(lines, [t0[0], t0[1], 0], t0, t1)
+    tri(lines, [t0[0], t0[1], 0], t1, [t1[0], t1[1], 0])
+  }
+  for (let iy = 0; iy < ny - 1; iy += 1) {
+    const t0 = vertexTop(nx - 1, iy)
+    const t1 = vertexTop(nx - 1, iy + 1)
+    tri(lines, [t0[0], t0[1], 0], t1, t0)
+    tri(lines, [t0[0], t0[1], 0], [t1[0], t1[1], 0], t1)
+  }
+
+  postProgress(runId, 'serialize', 'Serializing STL')
+  lines.push('endsolid routeforge')
+  return lines.join('\n')
+}
+
 async function fetchElevationGrid(
   runId: string,
   preview: WorkerPreviewModel,
@@ -251,7 +308,7 @@ async function generateRouteStl(
   params: Params,
   preview: WorkerPreviewModel,
   runId: string,
-): Promise<string> {
+): Promise<{ stlText: string; topFlipped: Float32Array; nx: number; ny: number }> {
   const { nx, ny } = preview.grid
   const { latMin, latMax, lonMin, lonMax } = preview.fittedGeo
   const controller = new AbortController()
@@ -351,61 +408,9 @@ async function generateRouteStl(
     }
   }
 
-  const vertexTop = (ix: number, iy: number): [number, number, number] => {
-    const x = (ix / Math.max(1, nx - 1)) * params.width
-    const y = (iy / Math.max(1, ny - 1)) * params.height
-    const z = topFlipped[iy * nx + ix]
-    return [x, y, z]
-  }
-
-  postProgress(runId, 'mesh', 'Building watertight mesh')
-
-  const lines: string[] = ['solid routeforge']
-
-  for (let iy = 0; iy < ny - 1; iy += 1) {
-    if (iy % 30 === 0) assertNotCancelled(runId)
-    for (let ix = 0; ix < nx - 1; ix += 1) {
-      const v00 = vertexTop(ix, iy)
-      const v10 = vertexTop(ix + 1, iy)
-      const v11 = vertexTop(ix + 1, iy + 1)
-      const v01 = vertexTop(ix, iy + 1)
-      tri(lines, v00, v10, v11)
-      tri(lines, v00, v11, v01)
-    }
-  }
-
-  tri(lines, [0, 0, 0], [params.width, params.height, 0], [params.width, 0, 0])
-  tri(lines, [0, 0, 0], [0, params.height, 0], [params.width, params.height, 0])
-
-  for (let ix = 0; ix < nx - 1; ix += 1) {
-    const t0 = vertexTop(ix, 0)
-    const t1 = vertexTop(ix + 1, 0)
-    tri(lines, [t0[0], t0[1], 0], [t1[0], t1[1], 0], t1)
-    tri(lines, [t0[0], t0[1], 0], t1, t0)
-  }
-  for (let ix = 0; ix < nx - 1; ix += 1) {
-    const t0 = vertexTop(ix, ny - 1)
-    const t1 = vertexTop(ix + 1, ny - 1)
-    tri(lines, [t0[0], t0[1], 0], t1, [t1[0], t1[1], 0])
-    tri(lines, [t0[0], t0[1], 0], t0, t1)
-  }
-  for (let iy = 0; iy < ny - 1; iy += 1) {
-    const t0 = vertexTop(0, iy)
-    const t1 = vertexTop(0, iy + 1)
-    tri(lines, [t0[0], t0[1], 0], t0, t1)
-    tri(lines, [t0[0], t0[1], 0], t1, [t1[0], t1[1], 0])
-  }
-  for (let iy = 0; iy < ny - 1; iy += 1) {
-    const t0 = vertexTop(nx - 1, iy)
-    const t1 = vertexTop(nx - 1, iy + 1)
-    tri(lines, [t0[0], t0[1], 0], t1, t0)
-    tri(lines, [t0[0], t0[1], 0], [t1[0], t1[1], 0], t1)
-  }
-
-  postProgress(runId, 'serialize', 'Serializing STL')
-  lines.push('endsolid routeforge')
+  const stlText = buildStlFromTop(topFlipped, nx, ny, params, runId)
   controllerByRun.delete(runId)
-  return lines.join('\n')
+  return { stlText, topFlipped, nx, ny }
 }
 
 onmessage = (event: MessageEvent<TerrainWorkerMessage>) => {
@@ -421,14 +426,44 @@ onmessage = (event: MessageEvent<TerrainWorkerMessage>) => {
 
   ;(async () => {
     cancelledRuns.delete(data.runId)
-    const stlText = await generateRouteStl(
+    if (data.kind === 'stl-from-cache') {
+      const topFlipped = Float32Array.from(data.topValues)
+      const stlText = buildStlFromTop(
+        topFlipped,
+        data.grid.nx,
+        data.grid.ny,
+        data.params,
+        data.runId,
+      )
+      assertNotCancelled(data.runId)
+      const payload: TerrainWorkerResponse = { kind: 'done-stl', runId: data.runId, stlText }
+      postMessage(payload)
+      return
+    }
+
+    const result = await generateRouteStl(
       data.points,
       data.params,
       data.preview,
       data.runId,
     )
     assertNotCancelled(data.runId)
-    const payload: TerrainWorkerResponse = { kind: 'done', runId: data.runId, stlText }
+
+    if (data.kind === 'preview3d') {
+      const previewPayload: TerrainWorkerResponse = {
+        kind: 'done-preview3d',
+        runId: data.runId,
+        payload: {
+          nx: result.nx,
+          ny: result.ny,
+          topValues: Array.from(result.topFlipped),
+        },
+      }
+      postMessage(previewPayload)
+      return
+    }
+
+    const payload: TerrainWorkerResponse = { kind: 'done-stl', runId: data.runId, stlText: result.stlText }
     postMessage(payload)
   })().catch((err) => {
     controllerByRun.delete(data.runId)

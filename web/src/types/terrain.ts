@@ -57,12 +57,35 @@ export type TerrainWorkerRequest = {
   preview: WorkerPreviewModel
 }
 
+export type TerrainWorkerPreviewRequest = {
+  kind: 'preview3d'
+  runId: string
+  points: Point[]
+  params: Params
+  preview: WorkerPreviewModel
+}
+
+export type TerrainWorkerStlFromCacheRequest = {
+  kind: 'stl-from-cache'
+  runId: string
+  params: Params
+  grid: {
+    nx: number
+    ny: number
+  }
+  topValues: number[]
+}
+
 export type TerrainWorkerCancel = {
   kind: 'cancel'
   runId: string
 }
 
-export type TerrainWorkerMessage = TerrainWorkerRequest | TerrainWorkerCancel
+export type TerrainWorkerMessage =
+  | TerrainWorkerRequest
+  | TerrainWorkerPreviewRequest
+  | TerrainWorkerStlFromCacheRequest
+  | TerrainWorkerCancel
 
 export type TerrainWorkerProgress = {
   kind: 'progress'
@@ -80,9 +103,19 @@ export type TerrainWorkerProgress = {
 }
 
 export type TerrainWorkerDone = {
-  kind: 'done'
+  kind: 'done-stl'
   runId: string
   stlText: string
+}
+
+export type TerrainWorkerPreviewDone = {
+  kind: 'done-preview3d'
+  runId: string
+  payload: {
+    nx: number
+    ny: number
+    topValues: number[]
+  }
 }
 
 export type TerrainWorkerError = {
@@ -94,4 +127,5 @@ export type TerrainWorkerError = {
 export type TerrainWorkerResponse =
   | TerrainWorkerProgress
   | TerrainWorkerDone
+  | TerrainWorkerPreviewDone
   | TerrainWorkerError
