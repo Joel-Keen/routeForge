@@ -28,23 +28,19 @@ This app is configured for GitHub Pages under the repository path `/routeForge/`
 ### One-time repository setup
 
 1. Open repository Settings -> Pages.
-2. In Build and deployment, set Source to GitHub Actions.
-3. Ensure your default branch is `main`.
+2. In Build and deployment, set Source to `Deploy from a branch`.
+3. Set Branch to `gh-pages` and Folder to `/(root)`.
+4. Ensure your default branch is `main`.
 
-### Automatic deployment
+### Publish to `gh-pages`
 
-A workflow is included at [.github/workflows/deploy-pages.yml](../.github/workflows/deploy-pages.yml).
-
-- It builds and deploys when `main` receives changes under `web/**`.
-- It can also be run manually from the Actions tab.
-
-### Manual deployment (alternative)
-
-You can also publish manually to the `gh-pages` branch:
+Build and publish with:
 
 ```bash
 npm run deploy
 ```
+
+This command builds the app and pushes `dist/` to the `gh-pages` branch.
 
 ## Notes
 

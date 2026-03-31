@@ -95,6 +95,5 @@ cd web
 npm run deploy
 ```
 
-Automatic GitHub Pages deployment is also configured via
-`.github/workflows/deploy-pages.yml` (push to `main` with changes under `web/**`).
-In repository Settings -> Pages, set Source to `GitHub Actions`.
+In repository Settings -> Pages, set Source to `Deploy from a branch`,
+Branch to `gh-pages`, and Folder to `/(root)`.
