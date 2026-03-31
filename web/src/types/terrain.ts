@@ -49,6 +49,17 @@ export type WorkerPreviewModel = {
   }
 }
 
+export type TerrainRecomputeCache = {
+  terrainUnitValues: number[]
+  points: Point[]
+  fittedGeo: {
+    latMin: number
+    latMax: number
+    lonMin: number
+    lonMax: number
+  }
+}
+
 export type TerrainWorkerRequest = {
   kind: 'generate'
   runId: string
@@ -63,6 +74,17 @@ export type TerrainWorkerPreviewRequest = {
   points: Point[]
   params: Params
   preview: WorkerPreviewModel
+}
+
+export type TerrainWorkerRecomputePreviewRequest = {
+  kind: 'recompute-preview3d'
+  runId: string
+  params: Params
+  grid: {
+    nx: number
+    ny: number
+  }
+  cache: TerrainRecomputeCache
 }
 
 export type TerrainWorkerStlFromCacheRequest = {
@@ -84,6 +106,7 @@ export type TerrainWorkerCancel = {
 export type TerrainWorkerMessage =
   | TerrainWorkerRequest
   | TerrainWorkerPreviewRequest
+  | TerrainWorkerRecomputePreviewRequest
   | TerrainWorkerStlFromCacheRequest
   | TerrainWorkerCancel
 
@@ -115,6 +138,17 @@ export type TerrainWorkerPreviewDone = {
     nx: number
     ny: number
     topValues: number[]
+    cache: TerrainRecomputeCache
+  }
+}
+
+export type TerrainWorkerRecomputePreviewDone = {
+  kind: 'done-recompute-preview3d'
+  runId: string
+  payload: {
+    nx: number
+    ny: number
+    topValues: number[]
   }
 }
 
@@ -128,4 +162,5 @@ export type TerrainWorkerResponse =
   | TerrainWorkerProgress
   | TerrainWorkerDone
   | TerrainWorkerPreviewDone
+  | TerrainWorkerRecomputePreviewDone
   | TerrainWorkerError

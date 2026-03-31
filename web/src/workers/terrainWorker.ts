@@ -1,6 +1,7 @@
 import type {
   Params,
   Point,
+  TerrainRecomputeCache,
   TerrainWorkerMessage,
   TerrainWorkerProgress,
   TerrainWorkerResponse,
@@ -107,7 +108,14 @@ function smoothElevation(input: Float32Array, nx: number, ny: number, runId: str
   return output
 }
 
-function normalizeTerrainMm(elevation: Float32Array, params: Params) {
+function terrainRangeMm(params: Params) {
+  const shortSide = Math.min(params.width, params.height)
+  let terrainRange = shortSide * 0.3 * (params.verticalExag / 10)
+  terrainRange = Math.min(terrainRange, shortSide * 0.8)
+  return terrainRange
+}
+
+function normalizeTerrainUnit(elevation: Float32Array) {
   let minVal = Number.POSITIVE_INFINITY
   let maxVal = Number.NEGATIVE_INFINITY
 
@@ -117,16 +125,131 @@ function normalizeTerrainMm(elevation: Float32Array, params: Params) {
     if (value > maxVal) maxVal = value
   }
 
-  const shortSide = Math.min(params.width, params.height)
-  let terrainRange = shortSide * 0.3 * (params.verticalExag / 10)
-  terrainRange = Math.min(terrainRange, shortSide * 0.8)
-
   const span = Math.max(1e-6, maxVal - minVal)
-  const terrainMm = new Float32Array(elevation.length)
+  const terrainUnit = new Float32Array(elevation.length)
   for (let i = 0; i < elevation.length; i += 1) {
-    terrainMm[i] = ((elevation[i] - minVal) / span) * terrainRange
+    terrainUnit[i] = (elevation[i] - minVal) / span
+  }
+  return terrainUnit
+}
+
+function terrainMmFromUnit(terrainUnit: Float32Array, params: Params) {
+  const range = terrainRangeMm(params)
+  const terrainMm = new Float32Array(terrainUnit.length)
+  for (let i = 0; i < terrainUnit.length; i += 1) {
+    terrainMm[i] = terrainUnit[i] * range
   }
   return terrainMm
+}
+
+function toGridPoints(points: Point[], preview: WorkerPreviewModel): Array<[number, number]> {
+  const { nx, ny } = preview.grid
+  const { latMin, latMax, lonMin, lonMax } = preview.fittedGeo
+  const lonSpan = Math.max(1e-9, lonMax - lonMin)
+  const latSpan = Math.max(1e-9, latMax - latMin)
+
+  return points.map((p) => {
+    const gx = ((p.lon - lonMin) / lonSpan) * (nx - 1)
+    const gy = ((latMax - p.lat) / latSpan) * (ny - 1)
+    return [gx, gy]
+  })
+}
+
+function computeMinDist2(
+  gridPts: Array<[number, number]>,
+  nx: number,
+  ny: number,
+  kernelRadius: number,
+  runId: string,
+) {
+  const minDist2 = new Float32Array(nx * ny)
+  minDist2.fill(Number.POSITIVE_INFINITY)
+
+  for (let i = 0; i < gridPts.length - 1; i += 1) {
+    if (i % 25 === 0) assertNotCancelled(runId)
+    const [x0, y0] = gridPts[i]
+    const [x1, y1] = gridPts[i + 1]
+    const dx = x1 - x0
+    const dy = y1 - y0
+    const steps = Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)) * 2))
+
+    for (let s = 0; s <= steps; s += 1) {
+      const t = s / steps
+      const x = x0 + dx * t
+      const y = y0 + dy * t
+      const ix0 = Math.max(0, Math.floor(x - kernelRadius))
+      const ix1 = Math.min(nx - 1, Math.ceil(x + kernelRadius))
+      const iy0 = Math.max(0, Math.floor(y - kernelRadius))
+      const iy1 = Math.min(ny - 1, Math.ceil(y + kernelRadius))
+
+      for (let iy = iy0; iy <= iy1; iy += 1) {
+        for (let ix = ix0; ix <= ix1; ix += 1) {
+          const ddx = ix - x
+          const ddy = iy - y
+          const d2 = ddx * ddx + ddy * ddy
+          const idx = iy * nx + ix
+          if (d2 < minDist2[idx]) minDist2[idx] = d2
+        }
+      }
+    }
+  }
+
+  return minDist2
+}
+
+function flipTopForStl(top: Float32Array, nx: number, ny: number) {
+  const topFlipped = new Float32Array(top.length)
+  for (let iy = 0; iy < ny; iy += 1) {
+    const srcRow = iy * nx
+    const dstRow = (ny - 1 - iy) * nx
+    for (let ix = 0; ix < nx; ix += 1) {
+      topFlipped[dstRow + ix] = top[srcRow + ix]
+    }
+  }
+  return topFlipped
+}
+
+function buildTopSurface(
+  params: Params,
+  nx: number,
+  ny: number,
+  terrainUnit: Float32Array,
+  gridPts: Array<[number, number]>,
+  runId: string,
+) {
+  const terrainMm = terrainMmFromUnit(terrainUnit, params)
+  const top = new Float32Array(nx * ny)
+
+  if (params.embossRoute && gridPts.length > 1) {
+    postProgress(runId, 'rasterize', 'Rasterizing route influence mask')
+
+    const cellX = params.width / Math.max(1, nx - 1)
+    const cellY = params.height / Math.max(1, ny - 1)
+    const meanCell = (cellX + cellY) * 0.5
+    const ridgeRadius = Math.max(1, (params.ridgeWidth * 0.5) / Math.max(1e-6, meanCell))
+    const kernelRadius = Math.max(2, Math.ceil(ridgeRadius * 2.2))
+    const sigma = Math.max(0.8, ridgeRadius * 0.6)
+    const sigma2 = sigma * sigma
+    const minDist2 = computeMinDist2(gridPts, nx, ny, kernelRadius, runId)
+
+    const ridgeScale = Math.max(0.1, params.verticalExag / 6)
+    for (let i = 0; i < top.length; i += 1) {
+      const d2 = minDist2[i]
+      const ridge =
+        d2 < Number.POSITIVE_INFINITY
+          ? params.ridgeHeight * ridgeScale * Math.exp(-d2 / (2 * sigma2))
+          : 0
+      top[i] = params.base + terrainMm[i] + ridge
+    }
+    postProgress(runId, 'blend', 'Combining terrain and route ridge')
+  } else {
+    postProgress(runId, 'blend', 'Route emboss disabled; using terrain-only surface')
+    for (let i = 0; i < top.length; i += 1) {
+      top[i] = params.base + terrainMm[i]
+    }
+  }
+
+  return top
 }
 
 function buildStlFromTop(topFlipped: Float32Array, nx: number, ny: number, params: Params, runId: string) {
@@ -308,9 +431,14 @@ async function generateRouteStl(
   params: Params,
   preview: WorkerPreviewModel,
   runId: string,
-): Promise<{ stlText: string; topFlipped: Float32Array; nx: number; ny: number }> {
+): Promise<{
+  stlText: string
+  topFlipped: Float32Array
+  nx: number
+  ny: number
+  cache: TerrainRecomputeCache
+}> {
   const { nx, ny } = preview.grid
-  const { latMin, latMax, lonMin, lonMax } = preview.fittedGeo
   const controller = new AbortController()
   controllerByRun.set(runId, controller)
 
@@ -323,94 +451,25 @@ async function generateRouteStl(
   postProgress(runId, 'smooth', 'Smoothing elevation field')
   const smoothed = smoothElevation(elevation, nx, ny, runId)
   assertNotCancelled(runId)
+  controllerByRun.delete(runId)
 
-  const terrainMm = normalizeTerrainMm(smoothed, params)
-
-  const top = new Float32Array(nx * ny)
-
-  const lonSpan = Math.max(1e-9, lonMax - lonMin)
-  const latSpan = Math.max(1e-9, latMax - latMin)
-
-  const toGrid = (p: Point): [number, number] => {
-    const gx = ((p.lon - lonMin) / lonSpan) * (nx - 1)
-    const gy = ((latMax - p.lat) / latSpan) * (ny - 1)
-    return [gx, gy]
-  }
-
-  const gridPts = points.map(toGrid)
-  const cellX = params.width / Math.max(1, nx - 1)
-  const cellY = params.height / Math.max(1, ny - 1)
-  const meanCell = (cellX + cellY) * 0.5
-  const ridgeRadius = Math.max(1, (params.ridgeWidth * 0.5) / Math.max(1e-6, meanCell))
-  const kernelRadius = Math.max(2, Math.ceil(ridgeRadius * 2.2))
-  const sigma = Math.max(0.8, ridgeRadius * 0.6)
-  const sigma2 = sigma * sigma
-
-  if (params.embossRoute) {
-    const minDist2 = new Float32Array(nx * ny)
-    minDist2.fill(Number.POSITIVE_INFINITY)
-
-    postProgress(runId, 'rasterize', 'Rasterizing route influence mask')
-
-    for (let i = 0; i < gridPts.length - 1; i += 1) {
-      if (i % 25 === 0) assertNotCancelled(runId)
-      const [x0, y0] = gridPts[i]
-      const [x1, y1] = gridPts[i + 1]
-      const dx = x1 - x0
-      const dy = y1 - y0
-      const steps = Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)) * 2))
-
-      for (let s = 0; s <= steps; s += 1) {
-        const t = s / steps
-        const x = x0 + dx * t
-        const y = y0 + dy * t
-        const ix0 = Math.max(0, Math.floor(x - kernelRadius))
-        const ix1 = Math.min(nx - 1, Math.ceil(x + kernelRadius))
-        const iy0 = Math.max(0, Math.floor(y - kernelRadius))
-        const iy1 = Math.min(ny - 1, Math.ceil(y + kernelRadius))
-
-        for (let iy = iy0; iy <= iy1; iy += 1) {
-          for (let ix = ix0; ix <= ix1; ix += 1) {
-            const ddx = ix - x
-            const ddy = iy - y
-            const d2 = ddx * ddx + ddy * ddy
-            const idx = iy * nx + ix
-            if (d2 < minDist2[idx]) minDist2[idx] = d2
-          }
-        }
-      }
-    }
-
-    const ridgeScale = Math.max(0.1, params.verticalExag / 6)
-    for (let i = 0; i < top.length; i += 1) {
-      const d2 = minDist2[i]
-      const ridge =
-        d2 < Number.POSITIVE_INFINITY
-          ? params.ridgeHeight * ridgeScale * Math.exp(-d2 / (2 * sigma2))
-          : 0
-      top[i] = params.base + terrainMm[i] + ridge
-    }
-    postProgress(runId, 'blend', 'Combining terrain and route ridge')
-  } else {
-    postProgress(runId, 'blend', 'Route emboss disabled; using terrain-only surface')
-    for (let i = 0; i < top.length; i += 1) {
-      top[i] = params.base + terrainMm[i]
-    }
-  }
-
-  // Match Python mesh orientation: north-facing row (iy=0) maps to higher Y in STL.
-  const topFlipped = new Float32Array(top.length)
-  for (let iy = 0; iy < ny; iy += 1) {
-    const srcRow = iy * nx
-    const dstRow = (ny - 1 - iy) * nx
-    for (let ix = 0; ix < nx; ix += 1) {
-      topFlipped[dstRow + ix] = top[srcRow + ix]
-    }
-  }
+  const terrainUnit = normalizeTerrainUnit(smoothed)
+  const gridPts = toGridPoints(points, preview)
+  const top = buildTopSurface(params, nx, ny, terrainUnit, gridPts, runId)
+  const topFlipped = flipTopForStl(top, nx, ny)
 
   const stlText = buildStlFromTop(topFlipped, nx, ny, params, runId)
-  controllerByRun.delete(runId)
-  return { stlText, topFlipped, nx, ny }
+  return {
+    stlText,
+    topFlipped,
+    nx,
+    ny,
+    cache: {
+      terrainUnitValues: Array.from(terrainUnit),
+      points,
+      fittedGeo: preview.fittedGeo,
+    },
+  }
 }
 
 onmessage = (event: MessageEvent<TerrainWorkerMessage>) => {
@@ -441,6 +500,30 @@ onmessage = (event: MessageEvent<TerrainWorkerMessage>) => {
       return
     }
 
+    if (data.kind === 'recompute-preview3d') {
+      postProgress(data.runId, 'preparing', 'Updating 3D preview from cached terrain data')
+      const terrainUnit = Float32Array.from(data.cache.terrainUnitValues)
+      const previewModel: WorkerPreviewModel = {
+        grid: data.grid,
+        fittedGeo: data.cache.fittedGeo,
+      }
+      const gridPts = toGridPoints(data.cache.points, previewModel)
+      const top = buildTopSurface(data.params, data.grid.nx, data.grid.ny, terrainUnit, gridPts, data.runId)
+      const topFlipped = flipTopForStl(top, data.grid.nx, data.grid.ny)
+      assertNotCancelled(data.runId)
+      const payload: TerrainWorkerResponse = {
+        kind: 'done-recompute-preview3d',
+        runId: data.runId,
+        payload: {
+          nx: data.grid.nx,
+          ny: data.grid.ny,
+          topValues: Array.from(topFlipped),
+        },
+      }
+      postMessage(payload)
+      return
+    }
+
     const result = await generateRouteStl(
       data.points,
       data.params,
@@ -457,6 +540,7 @@ onmessage = (event: MessageEvent<TerrainWorkerMessage>) => {
           nx: result.nx,
           ny: result.ny,
           topValues: Array.from(result.topFlipped),
+          cache: result.cache,
         },
       }
       postMessage(previewPayload)

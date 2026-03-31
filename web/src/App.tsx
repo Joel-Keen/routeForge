@@ -14,6 +14,7 @@ import type {
   Params,
   Point,
   PreviewModel,
+  TerrainRecomputeCache,
   TerrainWorkerMessage,
   TerrainWorkerResponse,
 } from './types/terrain'
@@ -43,7 +44,7 @@ const MAX_REQUESTS = 25
 type NumericParamKey = Exclude<keyof Params, 'embossRoute'>
 type InputMode = 'gpx' | 'maps' | 'rectangle'
 type ViewMode = '2d' | '3d'
-type WorkerTask = 'stl' | 'preview3d' | 'stl-from-cache'
+type WorkerTask = 'stl' | 'preview3d' | 'stl-from-cache' | 'preview3d-recompute'
 
 type GeoBounds = {
   latMin: number
@@ -57,6 +58,8 @@ type CachedTerrainPreview = {
   ny: number
   topValues: number[]
   aspect: number
+  cache: TerrainRecomputeCache
+  paramsSignature: string
 }
 
 const DEFAULT_MAP_BOUNDS: LatLngBoundsExpression = [
@@ -117,6 +120,18 @@ function fitBoundsToAspect(
   }
 
   return { latMin, latMax, lonMin, lonMax }
+}
+
+function buildPreviewParamSignature(params: Params) {
+  return [
+    params.width,
+    params.height,
+    params.base,
+    params.verticalExag,
+    params.ridgeHeight,
+    params.ridgeWidth,
+    params.embossRoute ? 1 : 0,
+  ].join('|')
 }
 
 function estimateEffectiveGrid(gridRes: number, aspect: number) {
@@ -277,8 +292,14 @@ function App() {
   const activeRunIdRef = useRef<string>('')
   const activeStemRef = useRef<string>('route')
   const previewAspectAtRequestRef = useRef<number | null>(null)
+  const previewParamSignatureAtRequestRef = useRef<string>('')
+  const pendingStlAfterRecomputeRef = useRef(false)
 
   const isPreviewLocked = cachedTerrainPreview !== null
+  const effectiveParams = useMemo(
+    () => (inputMode === 'rectangle' ? { ...params, embossRoute: false } : params),
+    [inputMode, params],
+  )
 
   const activePoints = useMemo(() => {
     if (inputMode === 'gpx') return gpxPoints
@@ -389,6 +410,31 @@ function App() {
     })
   }, [cachedTerrainPreview, inputMode, rectangleBounds, params.width])
 
+  useEffect(() => {
+    if (viewMode !== '3d' || !cachedTerrainPreview || isGenerating) return
+
+    const signature = buildPreviewParamSignature(effectiveParams)
+    if (signature === cachedTerrainPreview.paramsSignature) return
+
+    const timeout = window.setTimeout(() => {
+      dispatchCachedRecompute(cachedTerrainPreview, effectiveParams)
+    }, 150)
+
+    return () => window.clearTimeout(timeout)
+  }, [
+    viewMode,
+    cachedTerrainPreview,
+    isGenerating,
+    effectiveParams,
+    params.base,
+    params.verticalExag,
+    params.ridgeHeight,
+    params.ridgeWidth,
+    params.width,
+    params.height,
+    inputMode,
+  ])
+
   const handleUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
@@ -443,6 +489,7 @@ function App() {
     setViewMode('2d')
     setCachedTerrainPreview(null)
     setFetchProgressPct(null)
+    pendingStlAfterRecomputeRef.current = false
     setGenerationMessage('Returned to 2D preview. Generate 3D preview to download fresh elevation data.')
   }
 
@@ -452,6 +499,7 @@ function App() {
     if (isPreviewLocked) {
       setViewMode('2d')
       setCachedTerrainPreview(null)
+      pendingStlAfterRecomputeRef.current = false
     }
 
     if (mode === 'rectangle' && inputMode !== 'rectangle') {
@@ -502,6 +550,37 @@ function App() {
     setGenerationMessage('Rectangle captured.')
   }
 
+  const dispatchCachedRecompute = (
+    cache: CachedTerrainPreview,
+    nextParams: Params,
+    options?: { forDownload?: boolean },
+  ) => {
+    if (isGenerating) return
+
+    const worker = ensureWorker()
+    const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+    activeRunIdRef.current = runId
+    previewParamSignatureAtRequestRef.current = buildPreviewParamSignature(nextParams)
+    pendingStlAfterRecomputeRef.current = options?.forDownload ?? false
+    setActiveTask('preview3d-recompute')
+    setGenerationMessage(
+      options?.forDownload
+        ? 'Updating 3D preview from cached data before STL export'
+        : 'Updating 3D preview from cached data',
+    )
+
+    worker.postMessage({
+      kind: 'recompute-preview3d',
+      runId,
+      params: nextParams,
+      grid: {
+        nx: cache.nx,
+        ny: cache.ny,
+      },
+      cache: cache.cache,
+    } satisfies TerrainWorkerMessage)
+  }
+
   const ensureWorker = () => {
     if (workerRef.current) return workerRef.current
 
@@ -526,6 +605,7 @@ function App() {
         setActiveTask(null)
         setFetchProgressPct(100)
         setGenerationMessage('STL generated successfully')
+        pendingStlAfterRecomputeRef.current = false
         triggerStlDownload(message.stlText, activeStemRef.current)
         return
       }
@@ -555,6 +635,8 @@ function App() {
           ny: message.payload.ny,
           topValues: message.payload.topValues,
           aspect: Math.max(1e-6, previewAspect),
+          cache: message.payload.cache,
+          paramsSignature: previewParamSignatureAtRequestRef.current || buildPreviewParamSignature(effectiveParams),
         })
         setIsGenerating(false)
         setActiveTask(null)
@@ -564,17 +646,56 @@ function App() {
         return
       }
 
+      if (message.kind === 'done-recompute-preview3d') {
+        const signature = previewParamSignatureAtRequestRef.current || buildPreviewParamSignature(effectiveParams)
+        setCachedTerrainPreview((old) => {
+          if (!old) return old
+          return {
+            ...old,
+            topValues: message.payload.topValues,
+            paramsSignature: signature,
+          }
+        })
+        setActiveTask(null)
+
+        if (pendingStlAfterRecomputeRef.current) {
+          pendingStlAfterRecomputeRef.current = false
+          const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+          activeRunIdRef.current = runId
+          setIsGenerating(true)
+          setActiveTask('stl-from-cache')
+          setGenerationMessage('Building STL from cached preview data')
+          setFetchProgressPct(null)
+          ensureWorker().postMessage({
+            kind: 'stl-from-cache',
+            runId,
+            params: effectiveParams,
+            grid: {
+              nx: message.payload.nx,
+              ny: message.payload.ny,
+            },
+            topValues: message.payload.topValues,
+          } satisfies TerrainWorkerMessage)
+          return
+        }
+
+        setGenerationMessage('3D preview updated from cached data')
+        return
+      }
+
       if (message.kind === 'error') {
         if (message.error === 'Cancelled') {
           setActiveTask(null)
           setFetchProgressPct(null)
           setGenerationMessage('Generation cancelled')
+          pendingStlAfterRecomputeRef.current = false
           return
         }
         setError(message.error)
         setActiveTask(null)
         setFetchProgressPct(null)
         setGenerationMessage('Generation failed')
+        pendingStlAfterRecomputeRef.current = false
       }
       setIsGenerating(false)
     }
@@ -615,10 +736,15 @@ function App() {
     )
 
     const worker = ensureWorker()
-    const effectiveParams =
-      inputMode === 'rectangle' ? { ...params, embossRoute: false } : params
 
     if (cachedTerrainPreview) {
+      const signature = buildPreviewParamSignature(effectiveParams)
+      if (signature !== cachedTerrainPreview.paramsSignature) {
+        setIsGenerating(false)
+        dispatchCachedRecompute(cachedTerrainPreview, effectiveParams, { forDownload: true })
+        return
+      }
+
       worker.postMessage({
         kind: 'stl-from-cache',
         runId,
@@ -669,10 +795,10 @@ function App() {
     setActiveTask('preview3d')
     setFetchProgressPct(0)
     setGenerationMessage('Downloading OpenElevation data for 3D preview')
+    previewParamSignatureAtRequestRef.current = buildPreviewParamSignature(effectiveParams)
+    pendingStlAfterRecomputeRef.current = false
 
     const worker = ensureWorker()
-    const effectiveParams =
-      inputMode === 'rectangle' ? { ...params, embossRoute: false } : params
 
     worker.postMessage({
       kind: 'preview3d',
@@ -698,6 +824,7 @@ function App() {
     setIsGenerating(false)
     setActiveTask(null)
     setFetchProgressPct(null)
+    pendingStlAfterRecomputeRef.current = false
   }
 
   return (
@@ -827,7 +954,6 @@ function App() {
                 value={params.base}
                 min={0.1}
                 step={0.1}
-                disabled={isPreviewLocked}
                 onChange={(e) => updateParam('base', Number(e.target.value))}
               />
             </label>
@@ -838,7 +964,6 @@ function App() {
                 value={params.verticalExag}
                 min={0.1}
                 step={0.1}
-                disabled={isPreviewLocked}
                 onChange={(e) => updateParam('verticalExag', Number(e.target.value))}
               />
             </label>
@@ -870,7 +995,7 @@ function App() {
                 value={params.ridgeHeight}
                 min={0}
                 step={0.1}
-                disabled={!params.embossRoute || inputMode === 'rectangle' || isPreviewLocked}
+                disabled={!params.embossRoute || inputMode === 'rectangle'}
                 onChange={(e) => updateParam('ridgeHeight', Number(e.target.value))}
               />
             </label>
@@ -881,7 +1006,7 @@ function App() {
                 value={params.ridgeWidth}
                 min={0.1}
                 step={0.1}
-                disabled={!params.embossRoute || inputMode === 'rectangle' || isPreviewLocked}
+                disabled={!params.embossRoute || inputMode === 'rectangle'}
                 onChange={(e) => updateParam('ridgeWidth', Number(e.target.value))}
               />
             </label>
@@ -902,7 +1027,7 @@ function App() {
           </label>
 
           {isPreviewLocked && (
-            <p className="status">3D preview data locked. Width can be changed; use Back to 2D to unlock all parameters.</p>
+            <p className="status">3D preview data locked. Base, Vertical Exag, and Ridge controls update from cache without re-fetching elevation.</p>
           )}
 
           <button className="generate-preview" disabled={!preview || isGenerating} onClick={generate3dPreview}>
