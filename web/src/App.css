@@ -33,6 +33,7 @@
 }
 
 .panel {
+  min-width: 0;
   background: rgba(255, 255, 255, 0.8);
   border: 1px solid #cad7d2;
   border-radius: 14px;
@@ -51,14 +52,19 @@
   flex-direction: column;
   gap: 0.25rem;
   margin-bottom: 0.55rem;
+  min-width: 0;
 }
 
 .field span {
   font-size: 0.78rem;
   color: #3f4a4c;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .field input {
+  width: 100%;
+  min-width: 0;
   border: 1px solid #b8c8c2;
   border-radius: 8px;
   padding: 0.48rem 0.52rem;
@@ -67,7 +73,7 @@
 
 .grid-fields {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.35rem 0.55rem;
 }
 
@@ -188,6 +194,16 @@
   }
 
   .stats {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 480px) {
+  .app-shell {
+    padding: 1.5rem 0.8rem 2rem;
+  }
+
+  .grid-fields {
     grid-template-columns: 1fr;
   }
 }

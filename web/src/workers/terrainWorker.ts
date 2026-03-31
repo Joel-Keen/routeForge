@@ -315,12 +315,22 @@ async function generateRouteStl(
     top[i] = params.base + terrainMm[i] + ridge
   }
 
+  // Match Python mesh orientation: north-facing row (iy=0) maps to higher Y in STL.
+  const topFlipped = new Float32Array(top.length)
+  for (let iy = 0; iy < ny; iy += 1) {
+    const srcRow = iy * nx
+    const dstRow = (ny - 1 - iy) * nx
+    for (let ix = 0; ix < nx; ix += 1) {
+      topFlipped[dstRow + ix] = top[srcRow + ix]
+    }
+  }
+
   postProgress(runId, 'blend', 'Combining terrain and route ridge')
 
   const vertexTop = (ix: number, iy: number): [number, number, number] => {
     const x = (ix / Math.max(1, nx - 1)) * params.width
     const y = (iy / Math.max(1, ny - 1)) * params.height
-    const z = top[iy * nx + ix]
+    const z = topFlipped[iy * nx + ix]
     return [x, y, z]
   }
 
