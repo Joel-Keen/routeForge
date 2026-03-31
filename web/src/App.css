@@ -88,6 +88,30 @@
   cursor: not-allowed;
 }
 
+.cancel {
+  width: 100%;
+  margin-top: 0.45rem;
+  border: 1px solid #9ab2aa;
+  background: #f6fbf8;
+  color: #27453c;
+  border-radius: 10px;
+  padding: 0.62rem 0.72rem;
+  font-size: 0.93rem;
+  cursor: pointer;
+}
+
+.cancel:disabled {
+  color: #7a8d87;
+  border-color: #c8d7d1;
+  cursor: not-allowed;
+}
+
+.status {
+  margin-top: 0.7rem;
+  color: #3f5d53;
+  font-size: 0.84rem;
+}
+
 .error {
   margin-top: 0.7rem;
   color: #b42318;

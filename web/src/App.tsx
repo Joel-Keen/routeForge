@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { gpx as toGeoJsonGpx } from '@tmcw/togeojson'
 import {
@@ -9,23 +9,14 @@ import {
   useMap,
 } from 'react-leaflet'
 import type { LatLngBoundsExpression, LatLngExpression } from 'leaflet'
+import type {
+  Params,
+  Point,
+  PreviewModel,
+  TerrainWorkerMessage,
+  TerrainWorkerResponse,
+} from './types/terrain'
 import './App.css'
-
-type Point = {
-  lat: number
-  lon: number
-}
-
-type Params = {
-  width: number
-  height: number
-  base: number
-  verticalExag: number
-  gridRes: number
-  ridgeHeight: number
-  ridgeWidth: number
-  marginFrac: number
-}
 
 const DEFAULT_PARAMS: Params = {
   width: 100,
@@ -40,25 +31,6 @@ const DEFAULT_PARAMS: Params = {
 
 const BATCH_SIZE = 400
 const MAX_REQUESTS = 25
-
-type PreviewModel = {
-  routeBounds: LatLngBoundsExpression
-  fittedBounds: LatLngBoundsExpression
-  polyline: LatLngExpression[]
-  grid: {
-    nx: number
-    ny: number
-    requestedCalls: number
-    effectiveCalls: number
-    adjusted: boolean
-  }
-  fittedGeo: {
-    latMin: number
-    latMax: number
-    lonMin: number
-    lonMax: number
-  }
-}
 
 function fitBoundsToAspect(
   latMin: number,
@@ -154,127 +126,14 @@ function parseGpxPoints(xmlText: string): Point[] {
   return points
 }
 
-function tri(lines: string[], a: [number, number, number], b: [number, number, number], c: [number, number, number]) {
-  lines.push('  facet normal 0 0 0')
-  lines.push('    outer loop')
-  lines.push(`      vertex ${a[0]} ${a[1]} ${a[2]}`)
-  lines.push(`      vertex ${b[0]} ${b[1]} ${b[2]}`)
-  lines.push(`      vertex ${c[0]} ${c[1]} ${c[2]}`)
-  lines.push('    endloop')
-  lines.push('  endfacet')
-}
-
-function generateRouteStl(points: Point[], params: Params, preview: PreviewModel): string {
-  const { nx, ny } = preview.grid
-  const { latMin, latMax, lonMin, lonMax } = preview.fittedGeo
-
-  const top = new Float32Array(nx * ny)
-  const minDist2 = new Float32Array(nx * ny)
-  minDist2.fill(Number.POSITIVE_INFINITY)
-
-  const lonSpan = Math.max(1e-9, lonMax - lonMin)
-  const latSpan = Math.max(1e-9, latMax - latMin)
-
-  const toGrid = (p: Point): [number, number] => {
-    const gx = ((p.lon - lonMin) / lonSpan) * (nx - 1)
-    const gy = ((latMax - p.lat) / latSpan) * (ny - 1)
-    return [gx, gy]
-  }
-
-  const gridPts = points.map(toGrid)
-  const cellX = params.width / Math.max(1, nx - 1)
-  const cellY = params.height / Math.max(1, ny - 1)
-  const meanCell = (cellX + cellY) * 0.5
-  const ridgeRadius = Math.max(1, (params.ridgeWidth * 0.5) / Math.max(1e-6, meanCell))
-  const kernelRadius = Math.max(2, Math.ceil(ridgeRadius * 2.2))
-  const sigma = Math.max(0.8, ridgeRadius * 0.6)
-  const sigma2 = sigma * sigma
-
-  for (let i = 0; i < gridPts.length - 1; i += 1) {
-    const [x0, y0] = gridPts[i]
-    const [x1, y1] = gridPts[i + 1]
-    const dx = x1 - x0
-    const dy = y1 - y0
-    const steps = Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)) * 2))
-
-    for (let s = 0; s <= steps; s += 1) {
-      const t = s / steps
-      const x = x0 + dx * t
-      const y = y0 + dy * t
-      const ix0 = Math.max(0, Math.floor(x - kernelRadius))
-      const ix1 = Math.min(nx - 1, Math.ceil(x + kernelRadius))
-      const iy0 = Math.max(0, Math.floor(y - kernelRadius))
-      const iy1 = Math.min(ny - 1, Math.ceil(y + kernelRadius))
-
-      for (let iy = iy0; iy <= iy1; iy += 1) {
-        for (let ix = ix0; ix <= ix1; ix += 1) {
-          const ddx = ix - x
-          const ddy = iy - y
-          const d2 = ddx * ddx + ddy * ddy
-          const idx = iy * nx + ix
-          if (d2 < minDist2[idx]) minDist2[idx] = d2
-        }
-      }
-    }
-  }
-
-  const ridgeScale = Math.max(0.1, params.verticalExag / 6)
-  for (let i = 0; i < top.length; i += 1) {
-    const d2 = minDist2[i]
-    const ridge = d2 < Number.POSITIVE_INFINITY ? params.ridgeHeight * ridgeScale * Math.exp(-d2 / (2 * sigma2)) : 0
-    top[i] = params.base + ridge
-  }
-
-  const vertexTop = (ix: number, iy: number): [number, number, number] => {
-    const x = (ix / Math.max(1, nx - 1)) * params.width
-    const y = (iy / Math.max(1, ny - 1)) * params.height
-    const z = top[iy * nx + ix]
-    return [x, y, z]
-  }
-
-  const lines: string[] = ['solid routeforge']
-
-  for (let iy = 0; iy < ny - 1; iy += 1) {
-    for (let ix = 0; ix < nx - 1; ix += 1) {
-      const v00 = vertexTop(ix, iy)
-      const v10 = vertexTop(ix + 1, iy)
-      const v11 = vertexTop(ix + 1, iy + 1)
-      const v01 = vertexTop(ix, iy + 1)
-      tri(lines, v00, v10, v11)
-      tri(lines, v00, v11, v01)
-    }
-  }
-
-  tri(lines, [0, 0, 0], [params.width, params.height, 0], [params.width, 0, 0])
-  tri(lines, [0, 0, 0], [0, params.height, 0], [params.width, params.height, 0])
-
-  for (let ix = 0; ix < nx - 1; ix += 1) {
-    const t0 = vertexTop(ix, 0)
-    const t1 = vertexTop(ix + 1, 0)
-    tri(lines, [t0[0], t0[1], 0], [t1[0], t1[1], 0], t1)
-    tri(lines, [t0[0], t0[1], 0], t1, t0)
-  }
-  for (let ix = 0; ix < nx - 1; ix += 1) {
-    const t0 = vertexTop(ix, ny - 1)
-    const t1 = vertexTop(ix + 1, ny - 1)
-    tri(lines, [t0[0], t0[1], 0], t1, [t1[0], t1[1], 0])
-    tri(lines, [t0[0], t0[1], 0], t0, t1)
-  }
-  for (let iy = 0; iy < ny - 1; iy += 1) {
-    const t0 = vertexTop(0, iy)
-    const t1 = vertexTop(0, iy + 1)
-    tri(lines, [t0[0], t0[1], 0], t0, t1)
-    tri(lines, [t0[0], t0[1], 0], t1, [t1[0], t1[1], 0])
-  }
-  for (let iy = 0; iy < ny - 1; iy += 1) {
-    const t0 = vertexTop(nx - 1, iy)
-    const t1 = vertexTop(nx - 1, iy + 1)
-    tri(lines, [t0[0], t0[1], 0], t1, t0)
-    tri(lines, [t0[0], t0[1], 0], [t1[0], t1[1], 0], t1)
-  }
-
-  lines.push('endsolid routeforge')
-  return lines.join('\n')
+function triggerStlDownload(stlText: string, stem: string) {
+  const blob = new Blob([stlText], { type: 'model/stl' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${stem}_route.stl`
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 function FitToBounds({ bounds }: { bounds: LatLngBoundsExpression | null }) {
@@ -290,6 +149,12 @@ function App() {
   const [fileName, setFileName] = useState('')
   const [points, setPoints] = useState<Point[]>([])
   const [error, setError] = useState('')
+  const [generationMessage, setGenerationMessage] = useState('')
+  const [isGenerating, setIsGenerating] = useState(false)
+
+  const workerRef = useRef<Worker | null>(null)
+  const activeRunIdRef = useRef<string>('')
+  const activeStemRef = useRef<string>('route')
 
   const preview = useMemo<PreviewModel | null>(() => {
     if (points.length === 0) return null
@@ -373,17 +238,85 @@ function App() {
     setParams((old) => ({ ...old, [key]: value }))
   }
 
+  const ensureWorker = () => {
+    if (workerRef.current) return workerRef.current
+
+    const worker = new Worker(new URL('./workers/terrainWorker.ts', import.meta.url), {
+      type: 'module',
+    })
+
+    worker.onmessage = (event: MessageEvent<TerrainWorkerResponse>) => {
+      const message = event.data
+      if (message.runId !== activeRunIdRef.current) return
+
+      if (message.kind === 'progress') {
+        setGenerationMessage(message.message)
+        return
+      }
+
+      if (message.kind === 'done') {
+        setIsGenerating(false)
+        setGenerationMessage('STL generated successfully')
+        triggerStlDownload(message.stlText, activeStemRef.current)
+        return
+      }
+
+      if (message.kind === 'error') {
+        if (message.error === 'Cancelled') {
+          setGenerationMessage('Generation cancelled')
+          return
+        }
+        setError(message.error)
+        setGenerationMessage('Generation failed')
+      }
+      setIsGenerating(false)
+    }
+
+    workerRef.current = worker
+    return worker
+  }
+
+  useEffect(() => {
+    return () => {
+      workerRef.current?.terminate()
+      workerRef.current = null
+    }
+  }, [])
+
   const downloadStl = () => {
-    if (!preview) return
-    const stl = generateRouteStl(points, params, preview)
-    const blob = new Blob([stl], { type: 'model/stl' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    const stem = fileName.replace(/\.gpx$/i, '') || 'route'
-    a.href = url
-    a.download = `${stem}_route.stl`
-    a.click()
-    URL.revokeObjectURL(url)
+    if (!preview || isGenerating) return
+
+    const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+    activeRunIdRef.current = runId
+    activeStemRef.current = fileName.replace(/\.gpx$/i, '') || 'route'
+    setError('')
+    setIsGenerating(true)
+    setGenerationMessage('Starting generation worker')
+
+    const worker = ensureWorker()
+    const payload: TerrainWorkerMessage = {
+      kind: 'generate',
+      runId,
+      points,
+      params,
+      preview: {
+        grid: {
+          nx: preview.grid.nx,
+          ny: preview.grid.ny,
+        },
+        fittedGeo: preview.fittedGeo,
+      },
+    }
+    worker.postMessage(payload)
+  }
+
+  const cancelGeneration = () => {
+    if (!isGenerating || !workerRef.current) return
+    workerRef.current.postMessage({
+      kind: 'cancel',
+      runId: activeRunIdRef.current,
+    } satisfies TerrainWorkerMessage)
+    setIsGenerating(false)
   }
 
   return (
@@ -485,9 +418,15 @@ function App() {
             </label>
           </div>
 
-          <button className="download" disabled={!preview} onClick={downloadStl}>
+          <button className="download" disabled={!preview || isGenerating} onClick={downloadStl}>
             Download STL
           </button>
+
+          <button className="cancel" disabled={!isGenerating} onClick={cancelGeneration}>
+            Cancel Generation
+          </button>
+
+          {generationMessage && <p className="status">{generationMessage}</p>}
 
           {error && <p className="error">{error}</p>}
         </aside>
@@ -536,7 +475,7 @@ function App() {
       </section>
 
       <footer className="footnote">
-        STL now uses uploaded GPX geometry with route ridge embossing and watertight side walls in browser.
+        STL generation now combines OpenElevation terrain with GPX ridge embossing and watertight walls in browser worker.
       </footer>
     </main>
   )
