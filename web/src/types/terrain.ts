@@ -14,6 +14,7 @@ export type Params = {
   ridgeHeight: number
   ridgeWidth: number
   marginFrac: number
+  embossRoute: boolean
 }
 
 export type PreviewModel = {

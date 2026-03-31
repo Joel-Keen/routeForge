@@ -28,10 +28,12 @@ const DEFAULT_PARAMS: Params = {
   ridgeHeight: 6,
   ridgeWidth: 3,
   marginFrac: 0.2,
+  embossRoute: true,
 }
 
 const BATCH_SIZE = 400
 const MAX_REQUESTS = 25
+type NumericParamKey = Exclude<keyof Params, 'embossRoute'>
 
 function fitBoundsToAspect(
   latMin: number,
@@ -150,6 +152,7 @@ function App() {
   const [fileName, setFileName] = useState('')
   const [mapsUrl, setMapsUrl] = useState('')
   const [mapsMessage, setMapsMessage] = useState('')
+  const [routeSource, setRouteSource] = useState<'gpx' | 'maps' | null>(null)
   const [points, setPoints] = useState<Point[]>([])
   const [error, setError] = useState('')
   const [generationMessage, setGenerationMessage] = useState('')
@@ -229,6 +232,7 @@ function App() {
       }
       setPoints(parsed)
       setFileName(file.name)
+      setRouteSource('gpx')
       setMapsMessage('Using GPX upload as route source.')
       setError('')
     } catch (err) {
@@ -238,17 +242,18 @@ function App() {
     }
   }
 
-  const updateParam = (key: keyof Params, value: number) => {
+  const updateParam = (key: NumericParamKey, value: number) => {
     setParams((old) => ({ ...old, [key]: value }))
   }
 
-  const handleMapsConvert = () => {
+  const handleMapsConvert = async () => {
     if (isGenerating) return
 
     try {
-      const parsed = parseGoogleMapsRoute(mapsUrl)
+      const parsed = await parseGoogleMapsRoute(mapsUrl)
       setPoints(parsed.points)
       setFileName('google-maps-route')
+      setRouteSource('maps')
       setError('')
       setMapsMessage(
         parsed.warning
@@ -461,6 +466,7 @@ function App() {
                 value={params.ridgeHeight}
                 min={0}
                 step={0.1}
+                disabled={!params.embossRoute}
                 onChange={(e) => updateParam('ridgeHeight', Number(e.target.value))}
               />
             </label>
@@ -471,10 +477,20 @@ function App() {
                 value={params.ridgeWidth}
                 min={0.1}
                 step={0.1}
+                disabled={!params.embossRoute}
                 onChange={(e) => updateParam('ridgeWidth', Number(e.target.value))}
               />
             </label>
           </div>
+
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={params.embossRoute}
+              onChange={(e) => setParams((old) => ({ ...old, embossRoute: e.target.checked }))}
+            />
+            <span>Emboss route onto terrain</span>
+          </label>
 
           <button className="download" disabled={!preview || isGenerating} onClick={downloadStl}>
             Download STL
@@ -492,8 +508,12 @@ function App() {
         <section className="panel preview">
           <div className="preview-head">
             <h2>Dynamic 2D Preview</h2>
-            <p>{fileName || 'No GPX selected'}</p>
+            <p>{fileName || 'No route selected'}</p>
           </div>
+
+          {routeSource && (
+            <p className="source-chip">Source: {routeSource === 'gpx' ? 'GPX upload' : 'Google Maps link'}</p>
+          )}
 
           {preview ? (
             <>
@@ -527,13 +547,13 @@ function App() {
               </div>
             </>
           ) : (
-            <div className="empty">Upload a GPX file to start previewing route coverage.</div>
+            <div className="empty">Upload GPX or convert a Google Maps link to start previewing route coverage.</div>
           )}
         </section>
       </section>
 
       <footer className="footnote">
-        STL generation now combines OpenElevation terrain with GPX ridge embossing and watertight walls in browser worker.
+        STL generation combines OpenElevation terrain with optional route embossing and watertight walls in browser worker.
       </footer>
     </main>
   )

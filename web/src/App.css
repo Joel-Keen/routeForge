@@ -127,6 +127,21 @@
   gap: 0.35rem 0.55rem;
 }
 
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.55rem;
+  color: #2f4347;
+  font-size: 0.88rem;
+}
+
+.toggle-row input[type='checkbox'] {
+  width: auto;
+  min-width: 0;
+  margin: 0;
+}
+
 .download {
   width: 100%;
   margin-top: 0.6rem;
@@ -189,6 +204,17 @@
   margin: 0;
   font-size: 0.82rem;
   color: #4e6260;
+}
+
+.source-chip {
+  display: inline-block;
+  margin: 0 0 0.5rem;
+  padding: 0.22rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid #b8c8c2;
+  background: #f3f9f6;
+  color: #315248;
+  font-size: 0.78rem;
 }
 
 .map {

@@ -253,8 +253,6 @@ async function generateRouteStl(
   const terrainMm = normalizeTerrainMm(smoothed, params)
 
   const top = new Float32Array(nx * ny)
-  const minDist2 = new Float32Array(nx * ny)
-  minDist2.fill(Number.POSITIVE_INFINITY)
 
   const lonSpan = Math.max(1e-9, lonMax - lonMin)
   const latSpan = Math.max(1e-9, latMax - latMin)
@@ -274,45 +272,56 @@ async function generateRouteStl(
   const sigma = Math.max(0.8, ridgeRadius * 0.6)
   const sigma2 = sigma * sigma
 
-  postProgress(runId, 'rasterize', 'Rasterizing route influence mask')
+  if (params.embossRoute) {
+    const minDist2 = new Float32Array(nx * ny)
+    minDist2.fill(Number.POSITIVE_INFINITY)
 
-  for (let i = 0; i < gridPts.length - 1; i += 1) {
-    if (i % 25 === 0) assertNotCancelled(runId)
-    const [x0, y0] = gridPts[i]
-    const [x1, y1] = gridPts[i + 1]
-    const dx = x1 - x0
-    const dy = y1 - y0
-    const steps = Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)) * 2))
+    postProgress(runId, 'rasterize', 'Rasterizing route influence mask')
 
-    for (let s = 0; s <= steps; s += 1) {
-      const t = s / steps
-      const x = x0 + dx * t
-      const y = y0 + dy * t
-      const ix0 = Math.max(0, Math.floor(x - kernelRadius))
-      const ix1 = Math.min(nx - 1, Math.ceil(x + kernelRadius))
-      const iy0 = Math.max(0, Math.floor(y - kernelRadius))
-      const iy1 = Math.min(ny - 1, Math.ceil(y + kernelRadius))
+    for (let i = 0; i < gridPts.length - 1; i += 1) {
+      if (i % 25 === 0) assertNotCancelled(runId)
+      const [x0, y0] = gridPts[i]
+      const [x1, y1] = gridPts[i + 1]
+      const dx = x1 - x0
+      const dy = y1 - y0
+      const steps = Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)) * 2))
 
-      for (let iy = iy0; iy <= iy1; iy += 1) {
-        for (let ix = ix0; ix <= ix1; ix += 1) {
-          const ddx = ix - x
-          const ddy = iy - y
-          const d2 = ddx * ddx + ddy * ddy
-          const idx = iy * nx + ix
-          if (d2 < minDist2[idx]) minDist2[idx] = d2
+      for (let s = 0; s <= steps; s += 1) {
+        const t = s / steps
+        const x = x0 + dx * t
+        const y = y0 + dy * t
+        const ix0 = Math.max(0, Math.floor(x - kernelRadius))
+        const ix1 = Math.min(nx - 1, Math.ceil(x + kernelRadius))
+        const iy0 = Math.max(0, Math.floor(y - kernelRadius))
+        const iy1 = Math.min(ny - 1, Math.ceil(y + kernelRadius))
+
+        for (let iy = iy0; iy <= iy1; iy += 1) {
+          for (let ix = ix0; ix <= ix1; ix += 1) {
+            const ddx = ix - x
+            const ddy = iy - y
+            const d2 = ddx * ddx + ddy * ddy
+            const idx = iy * nx + ix
+            if (d2 < minDist2[idx]) minDist2[idx] = d2
+          }
         }
       }
     }
-  }
 
-  const ridgeScale = Math.max(0.1, params.verticalExag / 6)
-  for (let i = 0; i < top.length; i += 1) {
-    const d2 = minDist2[i]
-    const ridge =
-      d2 < Number.POSITIVE_INFINITY
-        ? params.ridgeHeight * ridgeScale * Math.exp(-d2 / (2 * sigma2))
-        : 0
-    top[i] = params.base + terrainMm[i] + ridge
+    const ridgeScale = Math.max(0.1, params.verticalExag / 6)
+    for (let i = 0; i < top.length; i += 1) {
+      const d2 = minDist2[i]
+      const ridge =
+        d2 < Number.POSITIVE_INFINITY
+          ? params.ridgeHeight * ridgeScale * Math.exp(-d2 / (2 * sigma2))
+          : 0
+      top[i] = params.base + terrainMm[i] + ridge
+    }
+    postProgress(runId, 'blend', 'Combining terrain and route ridge')
+  } else {
+    postProgress(runId, 'blend', 'Route emboss disabled; using terrain-only surface')
+    for (let i = 0; i < top.length; i += 1) {
+      top[i] = params.base + terrainMm[i]
+    }
   }
 
   // Match Python mesh orientation: north-facing row (iy=0) maps to higher Y in STL.
@@ -324,8 +333,6 @@ async function generateRouteStl(
       topFlipped[dstRow + ix] = top[srcRow + ix]
     }
   }
-
-  postProgress(runId, 'blend', 'Combining terrain and route ridge')
 
   const vertexTop = (ix: number, iy: number): [number, number, number] => {
     const x = (ix / Math.max(1, nx - 1)) * params.width
