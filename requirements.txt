@@ -1,5 +1,0 @@
-gpxpy
-numpy
-scipy
-numpy-stl
-requests
