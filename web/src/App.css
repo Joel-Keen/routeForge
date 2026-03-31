@@ -1,11 +1,17 @@
 .app-shell {
   max-width: 1200px;
   margin: 0 auto;
-  padding: 2rem 1.2rem 2.5rem;
+  height: 100dvh;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0.8rem 1rem 0.9rem;
 }
 
 .hero {
-  margin-bottom: 1.4rem;
+  margin-bottom: 0.5rem;
+  flex: 0 0 auto;
 }
 
 .kicker {
@@ -17,8 +23,8 @@
 }
 
 .hero h1 {
-  margin: 0.15rem 0 0;
-  font-size: clamp(1.7rem, 3.2vw, 2.6rem);
+  margin: 0;
+  font-size: clamp(1.35rem, 2.4vw, 2rem);
 }
 
 .subtitle {
@@ -27,31 +33,36 @@
 }
 
 .layout {
+  flex: 1;
+  min-height: 0;
   display: grid;
-  grid-template-columns: minmax(280px, 360px) 1fr;
-  gap: 1rem;
+  grid-template-columns: minmax(260px, 340px) 1fr;
+  gap: 0.75rem;
 }
 
 .panel {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
   min-width: 0;
   background: rgba(255, 255, 255, 0.8);
   border: 1px solid #cad7d2;
   border-radius: 14px;
-  padding: 1rem;
+  padding: 0.75rem;
   box-shadow: 0 10px 30px rgba(7, 35, 27, 0.08);
 }
 
 .controls h2,
 .preview h2 {
-  margin: 0 0 0.6rem;
-  font-size: 1rem;
+  margin: 0 0 0.45rem;
+  font-size: 0.95rem;
 }
 
 .mode-toggle {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.35rem;
-  margin-bottom: 0.7rem;
+  margin-bottom: 0.5rem;
 }
 
 .mode-tab {
@@ -59,7 +70,7 @@
   background: #f4faf7;
   color: #2f4540;
   border-radius: 10px;
-  padding: 0.48rem 0.4rem;
+  padding: 0.4rem 0.35rem;
   font-size: 0.8rem;
   cursor: pointer;
 }
@@ -79,12 +90,12 @@
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
-  margin-bottom: 0.55rem;
+  margin-bottom: 0.42rem;
   min-width: 0;
 }
 
 .field span {
-  font-size: 0.78rem;
+  font-size: 0.74rem;
   color: #3f4a4c;
   overflow-wrap: break-word;
   word-break: break-word;
@@ -95,8 +106,8 @@
   min-width: 0;
   border: 1px solid #b8c8c2;
   border-radius: 8px;
-  padding: 0.48rem 0.52rem;
-  font-size: 0.93rem;
+  padding: 0.4rem 0.48rem;
+  font-size: 0.86rem;
 }
 
 .maps-link {
@@ -105,8 +116,8 @@
   resize: vertical;
   border: 1px solid #b8c8c2;
   border-radius: 8px;
-  padding: 0.52rem;
-  font-size: 0.9rem;
+  padding: 0.42rem;
+  font-size: 0.84rem;
   font-family: inherit;
 }
 
@@ -120,8 +131,8 @@
 .clear-link {
   width: 100%;
   border-radius: 10px;
-  padding: 0.58rem 0.68rem;
-  font-size: 0.9rem;
+  padding: 0.48rem 0.58rem;
+  font-size: 0.84rem;
   cursor: pointer;
 }
 
@@ -144,9 +155,9 @@
 }
 
 .source-note {
-  margin: 0.55rem 0 0.7rem;
+  margin: 0.45rem 0 0.52rem;
   color: #5f6e71;
-  font-size: 0.8rem;
+  font-size: 0.74rem;
 }
 
 .rectangle-tools {
@@ -163,16 +174,16 @@
 .grid-fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.35rem 0.55rem;
+  gap: 0.28rem 0.45rem;
 }
 
 .toggle-row {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  margin-top: 0.55rem;
+  margin-top: 0.4rem;
   color: #2f4347;
-  font-size: 0.88rem;
+  font-size: 0.8rem;
 }
 
 .toggle-row input[type='checkbox'] {
@@ -183,25 +194,25 @@
 
 .download {
   width: 100%;
-  margin-top: 0.6rem;
+  margin-top: 0.42rem;
   border: none;
   background: #0a7f5a;
   color: #ffffff;
   border-radius: 10px;
-  padding: 0.66rem 0.72rem;
-  font-size: 0.95rem;
+  padding: 0.52rem 0.62rem;
+  font-size: 0.86rem;
   cursor: pointer;
 }
 
 .generate-preview {
   width: 100%;
-  margin-top: 0.6rem;
+  margin-top: 0.42rem;
   border: 1px solid #9ab2aa;
   background: #f6fbf8;
   color: #27453c;
   border-radius: 10px;
-  padding: 0.62rem 0.72rem;
-  font-size: 0.93rem;
+  padding: 0.5rem 0.62rem;
+  font-size: 0.84rem;
   cursor: pointer;
 }
 
@@ -218,13 +229,13 @@
 
 .cancel {
   width: 100%;
-  margin-top: 0.45rem;
+  margin-top: 0.35rem;
   border: 1px solid #9ab2aa;
   background: #f6fbf8;
   color: #27453c;
   border-radius: 10px;
-  padding: 0.62rem 0.72rem;
-  font-size: 0.93rem;
+  padding: 0.5rem 0.62rem;
+  font-size: 0.84rem;
   cursor: pointer;
 }
 
@@ -236,13 +247,13 @@
 
 .back-2d {
   width: 100%;
-  margin-top: 0.45rem;
+  margin-top: 0.35rem;
   border: 1px solid #9ab2aa;
   background: #f6fbf8;
   color: #27453c;
   border-radius: 10px;
-  padding: 0.62rem 0.72rem;
-  font-size: 0.93rem;
+  padding: 0.5rem 0.62rem;
+  font-size: 0.84rem;
   cursor: pointer;
 }
 
@@ -253,8 +264,8 @@
 }
 
 .fetch-progress {
-  margin-top: 0.55rem;
-  padding: 0.5rem 0.55rem;
+  margin-top: 0.45rem;
+  padding: 0.4rem 0.5rem;
   border: 1px solid #c4d2cd;
   border-radius: 10px;
   background: #f5faf8;
@@ -263,7 +274,7 @@
 .fetch-progress-head {
   display: flex;
   justify-content: space-between;
-  font-size: 0.8rem;
+  font-size: 0.74rem;
   color: #2f4a43;
   margin-bottom: 0.28rem;
 }
@@ -274,47 +285,51 @@
 }
 
 .status {
-  margin-top: 0.7rem;
+  margin-top: 0.45rem;
   color: #3f5d53;
-  font-size: 0.84rem;
+  font-size: 0.76rem;
 }
 
 .error {
-  margin-top: 0.7rem;
+  margin-top: 0.45rem;
   color: #b42318;
-  font-size: 0.85rem;
+  font-size: 0.77rem;
 }
 
 .preview {
-  min-height: 540px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .preview-head {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  margin-bottom: 0.55rem;
+  margin-bottom: 0.4rem;
 }
 
 .preview-head p {
   margin: 0;
-  font-size: 0.82rem;
+  font-size: 0.74rem;
   color: #4e6260;
 }
 
 .source-chip {
   display: inline-block;
-  margin: 0 0 0.5rem;
-  padding: 0.22rem 0.5rem;
+  margin: 0 0 0.35rem;
+  padding: 0.18rem 0.45rem;
   border-radius: 999px;
   border: 1px solid #b8c8c2;
   background: #f3f9f6;
   color: #315248;
-  font-size: 0.78rem;
+  font-size: 0.72rem;
 }
 
 .map {
-  height: 430px;
+  height: clamp(210px, 39vh, 360px);
+  flex: 1 1 auto;
+  min-height: 0;
   border-radius: 10px;
   overflow: hidden;
   border: 1px solid #cad7d2;
@@ -339,73 +354,144 @@
 }
 
 .stats {
-  margin-top: 0.7rem;
+  margin-top: 0.45rem;
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 0.35rem;
+  gap: 0.28rem;
 }
 
 .stats p {
   margin: 0;
-  font-size: 0.84rem;
+  font-size: 0.76rem;
   background: #f0f7f4;
-  padding: 0.42rem 0.5rem;
+  padding: 0.32rem 0.42rem;
   border-radius: 8px;
 }
 
 .empty {
-  height: 430px;
+  height: clamp(210px, 39vh, 360px);
+  flex: 1 1 auto;
+  min-height: 0;
   border: 1px dashed #9db0a7;
   border-radius: 10px;
   display: grid;
   place-items: center;
-  font-size: 0.95rem;
+  font-size: 0.84rem;
   color: #516063;
 }
 
 .footnote {
-  margin-top: 0.7rem;
-  font-size: 0.82rem;
+  margin-top: 0.42rem;
+  font-size: 0.74rem;
   color: #5f6e71;
 }
 
 @media (max-width: 960px) {
-  .layout {
-    grid-template-columns: 1fr;
+  .app-shell {
+    padding: 0.6rem 0.75rem 0.7rem;
   }
 
-  .preview {
-    min-height: auto;
+  .layout {
+    grid-template-columns: minmax(220px, 42%) 1fr;
+  }
+
+  .mode-tab {
+    font-size: 0.75rem;
   }
 
   .map,
   .empty {
-    height: 360px;
+    height: clamp(190px, 36vh, 300px);
   }
 
   .stats {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-height: 820px) {
+  .app-shell {
+    padding: 0.55rem 0.75rem 0.6rem;
+  }
+
+  .hero {
+    margin-bottom: 0.35rem;
+  }
+
+  .hero h1 {
+    font-size: clamp(1.2rem, 2vw, 1.6rem);
+  }
+
+  .layout {
+    gap: 0.55rem;
+  }
+
+  .panel {
+    padding: 0.6rem;
+  }
+
+  .map,
+  .empty {
+    height: clamp(170px, 32vh, 260px);
+  }
+}
+
+@media (max-height: 740px) {
+  .app-shell {
+    transform: scale(0.92);
+    transform-origin: top center;
+    width: calc(100% / 0.92);
+    height: calc(100dvh / 0.92);
+    padding: 0.45rem 0.65rem 0.5rem;
+  }
+
+  .panel {
+    padding: 0.5rem;
+  }
+
+  .mode-tab,
+  .convert,
+  .clear-link,
+  .generate-preview,
+  .cancel,
+  .back-2d,
+  .download {
+    font-size: 0.78rem;
+    padding: 0.42rem 0.52rem;
+  }
+
+  .map,
+  .empty {
+    height: clamp(150px, 28vh, 220px);
   }
 }
 
 @media (max-width: 480px) {
   .app-shell {
-    padding: 1.5rem 0.8rem 2rem;
+    padding: 0.45rem 0.55rem 0.5rem;
   }
 
   .mode-toggle {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .grid-fields {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .link-actions {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .rectangle-tools {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .layout {
+    grid-template-columns: minmax(180px, 45%) 1fr;
+  }
+
+  .stats {
     grid-template-columns: 1fr;
   }
 }

@@ -1080,16 +1080,16 @@ function App() {
             Generate 3D Preview
           </button>
 
-          <button className="download" disabled={!preview || isGenerating} onClick={downloadStl}>
-            Download STL
-          </button>
-
           <button className="cancel" disabled={!isGenerating} onClick={cancelGeneration}>
             Cancel Generation
           </button>
 
           <button className="back-2d" disabled={isGenerating || viewMode !== '3d'} onClick={backTo2d}>
             Back to 2D
+          </button>
+
+          <button className="download" disabled={!preview || isGenerating} onClick={downloadStl}>
+            Download STL
           </button>
 
           {isGenerating && fetchProgressPct !== null && (
