@@ -556,6 +556,7 @@ function App() {
     }
 
     if (leavingRectangle) {
+      setRectangleBounds(null)
       setRectangleDraftBounds(null)
       setIsRectangleDrawArmed(false)
     }
